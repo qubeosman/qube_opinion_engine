@@ -4,30 +4,56 @@ node {
     String tnt_guid = "${tenant_id}"
     String org_guid = "${org_id}"
     String project_id = "${project_id}"
+    String commithash = "${commit_hash}"
 
-    // load project
-    def project = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "projects",
-      id: "${project_id}", tenantId: "${tnt_guid}", orgId: "${org_guid}")
-    String b64_encoded_qube_yaml = project.qubeYaml
-    byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
-    String qube_yaml = new String(b64_decoded)
-    def qubeConfig = getYaml(qube_yaml)
-    
-    // toolchain
-    def toolchain = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "toolchains",
-      id: project.toolchainId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
-    echo toolchain.name
-    
-    // opinion
-    def opinion = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "opinions",
-      id: project.opinionId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
+    def project = null
+    def toolchain = null
+    def opinion = null
+    def qubeConfig = null
+
+    stage("init") {
+        // load project
+        project = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "projects",
+          id: "${project_id}", tenantId: "${tnt_guid}", orgId: "${org_guid}")
+        if (commithash?.trim().length() == 0) {
+            echo "replacing empty commit hash with refspec " + project.scm.refspec
+            commithash = project.scm.refspec
+        }
+        String b64_encoded_qube_yaml = project.qubeYaml
+        byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
+        String qube_yaml = new String(b64_decoded)
+        qubeConfig = getYaml(qube_yaml)
+
+        // load owner info
+        def owner = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "users",
+          id: project.owner, tenantId: "${tnt_guid}", orgId: "", exchangeToken: false)
+
+        // checkout
+        String owner_credentials_id = "qubeship:production:" + owner.credential
+        checkout poll: false, scm: [$class: 'GitSCM',
+            branches: [[name: "${commithash}"]],
+            userRemoteConfigs: [[
+                credentialsId: owner_credentials_id,
+                url: project.scm.repoUrl,
+                refspec: project.scm.refspec
+            ]]
+        ]
+
+        // load toolchain
+        toolchain = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "toolchains",
+          id: project.toolchainId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
+        
+        // opinion
+        opinion = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "opinions",
+          id: project.opinionId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
+    }
+
     docker.withRegistry('https://gcr.io/', 'gcr:qubeship-partners') {
         process(opinion, toolchain, qubeConfig)
     }
-
 }
 
-def process (def opinion, toolchain, qubeConfig){
+def process(opinion, toolchain, qubeConfig) {
     def toolchain_prefix = "gcr.io/qubeship-partners/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     Object[] opinionList = getArray(opinion.opinionItems)
@@ -44,6 +70,7 @@ def getArray(def items) {
     Object[] array = items.toArray(new Object[items.size()])
     return array
 }
+
 @NonCPS
 def getYaml(yamlStr) {
     def yaml = new Yaml()
