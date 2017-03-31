@@ -12,6 +12,9 @@ node {
     def qubeConfig = null
     def endpointsMap = [:]
 
+    String toolchainRegistryUrl = ""
+    String toolchainRegistryCredentialsPath = ""
+
     stage("init") {
         // load project
         project = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "projects",
@@ -43,23 +46,30 @@ node {
         // load toolchain
         toolchain = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "toolchains",
           id: project.toolchainId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
+        // find the URL and credentials of the registry where the toolchain image is
+        def toolchainRegistry = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "endpoints",
+          id: toolchain.endpointId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
+        toolchainRegistryUrl = toolchainRegistry.endPoint
+        toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
 
         // opinion
         opinion = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "opinions",
           id: project.opinionId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
 
         // load all endpoints
-        Object[] endpointsList = getArray(qubeConfig['project']['args']['endpoints'])
+        Object[] endpointsList = getArray(qubeConfig['project']['endpoints'])
         for (int i = 0; i < endpointsList.length; i++) {
             def endpoint = endpointsList[i]
             endpointObj = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "endpoints",
               id: endpoint.id, tenantId: "${tnt_guid}", orgId: "${org_guid}")
             endpointsMap.put(endpoint.id, endpointObj)
         }
-        println("endpointsMap.size() = " + endpointsMap.size())
     }
 
-    process(opinion, toolchain, qubeConfig)
+    // TODO: find the way to get gcr credentials
+    docker.withRegistry(toolchainRegistryUrl, 'gcr:qubeship-partners') {
+        process(opinion, toolchain, qubeConfig)
+    }
 }
 
 def process(opinion, toolchain, qubeConfig) {
@@ -88,69 +98,76 @@ def getYaml(yamlStr) {
 }
 
 def runStage(toolchain_img, stageObj, toolchain, qubeConfig) {
-    echo 'stage: ' + stageObj.name
-    Object[] taskList = getArray(stageObj.tasks)
-    if (stageObj.name == 'build') {
-        runBuildTasks(toolchain_img, taskList, toolchain, qubeConfig)
+    // skip if the stage is skippable or throw error
+    if ('skip' in qubeConfig['project'][stageObj.name] && qubeConfig['project'][stageObj.name]['skip']) {
+        if (!stageObj.properties.skippable) {
+            error ("Stage ${stageObj.name} cannot be skipped!")
+        }
     } else {
-        for (int i=0; i<taskList.length; i++){
-            def task = taskList[i];
-            runTask(toolchain_img, task, toolchain, qubeConfig)
+        Object[] taskList = getArray(stageObj.tasks)
+        if (stageObj.name == 'build') {
+            runBuildTasks(toolchain_img, taskList, toolchain, qubeConfig)
+        } else {
+            for (int i = 0; i < taskList.length; i++) {
+                def task = taskList[i];
+                runTask(toolchain_img, task, toolchain, qubeConfig)
+            }
         }
     }
 }
 
-@NonCPS
 def runTask(toolchain_img, task, toolchain, qubeConfig) {
-    //temporarily until endpoint resolution is resolved
-    taskDefInProject = qubeConfig['project'][task.parent.name][task.name]
-    // lookup in toolchain
+    def taskDefInProject = null
+    if (task.parent.name in qubeConfig['project'] && task.name in qubeConfig['project'][task.parent.name]) {
+        taskDefInProject = qubeConfig['project'][task.parent.name][task.name]
+    }
 
-    taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
-   
-    ArrayList <String> actions = new ArrayList<String>();
-    if (taskDefInProject?.actions) {
-        // action arg1 arg2 ...
-        for (action in taskDefInProject.actions) {
-            actions.add(action)
-        }
-    } else if (task.actions) {
-        for (action in task.actions) {
-            actions.add(action)
+    // skip if the task is skippable or throw error
+    if (taskDefInProject?.skip) {
+        if (!task.properties.skippable) {
+            error ("Task ${task.name} cannot be skipped!")
         }
     } else {
-        actions.add(taskInToolchain)
-    }
+        // lookup in toolchain
+        taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
 
-    args = ""
-    if (taskDefInProject?.args) {
-        for (arg in taskDefInProject?.args) {
-            args = args + " ${arg}"
-        }   
-    }
-    cid = UUID.randomUUID().toString()
-    command = null
-    for (String action: actions) {
-        String fullAction = action + " " + args
-        command = (command == null) ? fullAction :  command + " && " + fullAction
-  
-    }
-    println("toolchain_img " + toolchain_img + ", stage: " + 
-    task.parent.name + ", task :" + task.name + ", command :" + command + 
-    ", id :" + cid)
-    if(command == null || command?.trim().length() == 0  || command?.trim() == "null") {
-        println("no definition available , skipping")
-        return
-    }
+        def actions = []
+        if (taskDefInProject?.actions) {
+            // action arg1 arg2 ...
+            for (action in taskDefInProject.actions) {
+                // actions.add(action)
+                actions << action
+            }
+        } else if (task.actions) {
+            for (action in task.actions) {
+                // actions.add(action)
+                actions << action
+            }
+        } else {
+            // actions.add(taskInToolchain)
+            actions << taskInToolchain
+        }
 
-    // actions defined in the opinion are not run inside the toolchain container
-    if (task.actions) {
-        sh(script: "echo $command")
-    }
-    else {
-        println("starting container launch " + cid + ":" +  actions.size())
-        sh(script:"docker run --name $cid $toolchain_img $command")
-        println("done " + cid)
+        def args = [:]
+        int count = 0
+        if (taskDefInProject?.args) {
+            for (arg in taskDefInProject?.args) {
+                count++
+                args.put(count, arg)
+            }   
+        } else if (task.properties) {
+            println(task.properties)
+            def taskDefaultArgs = task.properties.get("args")
+            for (arg in taskDefaultArgs) {
+                count++
+                args.put(count, arg)
+            }
+        }
+
+        def command = qubeCommand(
+            actions: actions, args: args, 
+            tenantId: "${tenant_id}", orgId: "${org_id}", serverAddr: 'http://localhost:3003')
+        println(command)
     }
 }
 
