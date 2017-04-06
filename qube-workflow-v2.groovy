@@ -15,60 +15,57 @@ node {
     String toolchainRegistryUrl = ""
     String toolchainRegistryCredentialsPath = ""
 
-    stage("init") {
-        // load project
-        project = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "projects",
-          id: "${project_id}", tenantId: "${tnt_guid}", orgId: "${org_guid}")
-        if (commithash?.trim().length() == 0) {
-            echo "replacing empty commit hash with refspec " + project.scm.refspec
-            commithash = project.scm.refspec
+    qubeship.inQubeshipTenancy(tnt_guid, org_guid, "http://mock-api.qubeship.io") {
+        stage("init") {
+            // load project
+            project = qubeApi(httpMethod: "GET", resource: "projects", id: "${project_id}")
+            if (commithash?.trim().length() == 0) {
+                echo "replacing empty commit hash with refspec " + project.scm.refspec
+                commithash = project.scm.refspec
+            }
+            String b64_encoded_qube_yaml = project.qubeYaml
+            byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
+            String qube_yaml = new String(b64_decoded)
+            qubeConfig = getYaml(qube_yaml)
+
+            // load owner info
+            def owner = qubeApi(serverAddr: "https://api.qubeship.io", httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false)
+
+            // checkout
+            String owner_credentials_id = "qubeship:usercredentials:" + owner.credential
+            checkout poll: false, scm: [$class: 'GitSCM',
+                branches: [[name: "${commithash}"]],
+                userRemoteConfigs: [[
+                    credentialsId: owner_credentials_id,
+                    url: project.scm.repoUrl,
+                    refspec: project.scm.refspec
+                ]]
+            ]
+
+            // load toolchain
+            toolchain = qubeApi(httpMethod: "GET", resource: "toolchains", id: project.toolchainId)
+            // find the URL and credentials of the registry where the toolchain image is
+            def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId)
+            toolchainRegistryUrl = toolchainRegistry.endPoint
+            toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
+
+            // opinion
+            opinion = qubeApi(httpMethod: "GET", resource: "opinions", id: project.opinionId)
+
+            // load all endpoints
+            /*Object[] endpointsList = getArray(qubeConfig['project']['endpoints'])
+            for (int i = 0; i < endpointsList.length; i++) {
+                def endpoint = endpointsList[i]
+                endpointObj = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "endpoints",
+                id: endpoint.id, tenantId: "${tnt_guid}", orgId: "${org_guid}")
+                endpointsMap.put(endpoint.id, endpointObj)
+            }*/
         }
-        String b64_encoded_qube_yaml = project.qubeYaml
-        byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
-        String qube_yaml = new String(b64_decoded)
-        qubeConfig = getYaml(qube_yaml)
 
-        // load owner info
-        def owner = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "users",
-          id: project.owner, tenantId: "${tnt_guid}", orgId: "", exchangeToken: false)
-
-        // checkout
-        String owner_credentials_id = "qubeship:production:" + owner.credential
-        checkout poll: false, scm: [$class: 'GitSCM',
-            branches: [[name: "${commithash}"]],
-            userRemoteConfigs: [[
-                credentialsId: owner_credentials_id,
-                url: project.scm.repoUrl,
-                refspec: project.scm.refspec
-            ]]
-        ]
-
-        // load toolchain
-        toolchain = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "toolchains",
-          id: project.toolchainId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
-        // find the URL and credentials of the registry where the toolchain image is
-        def toolchainRegistry = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "endpoints",
-          id: toolchain.endpointId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
-        toolchainRegistryUrl = toolchainRegistry.endPoint
-        toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
-
-        // opinion
-        opinion = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "opinions",
-          id: project.opinionId, tenantId: "${tnt_guid}", orgId: "${org_guid}")
-
-        // load all endpoints
-        Object[] endpointsList = getArray(qubeConfig['project']['endpoints'])
-        for (int i = 0; i < endpointsList.length; i++) {
-            def endpoint = endpointsList[i]
-            endpointObj = qubeApi(serverAddr: "http://mock-api.qubeship.io", httpMethod: "GET", resource: "endpoints",
-              id: endpoint.id, tenantId: "${tnt_guid}", orgId: "${org_guid}")
-            endpointsMap.put(endpoint.id, endpointObj)
+        // TODO: find the way to get gcr credentials
+        docker.withRegistry(toolchainRegistryUrl, 'gcr:qubeship-partners') {
+            process(opinion, toolchain, qubeConfig)
         }
-    }
-
-    // TODO: find the way to get gcr credentials
-    docker.withRegistry(toolchainRegistryUrl, 'gcr:qubeship-partners') {
-        process(opinion, toolchain, qubeConfig)
     }
 }
 
@@ -156,7 +153,6 @@ def runTask(toolchain_img, task, toolchain, qubeConfig) {
                 args.put(count, arg)
             }   
         } else if (task.properties) {
-            println(task.properties)
             def taskDefaultArgs = task.properties.get("args")
             for (arg in taskDefaultArgs) {
                 count++
@@ -164,10 +160,19 @@ def runTask(toolchain_img, task, toolchain, qubeConfig) {
             }
         }
 
-        def command = qubeCommand(
-            actions: actions, args: args, 
-            tenantId: "${tenant_id}", orgId: "${org_id}", serverAddr: 'http://localhost:3003')
-        println(command)
+        // cid = UUID.randomUUID().toString()
+
+        println('****** In the task: ' + task.name)
+        println('Given the actions: ' + actions)
+        println('and the args: ' + args)
+
+        def commands = qubeCommand(actions: actions, args: args, id: "${project_id}", serverAddr: "https://api.qubeship.io")
+        println(commands.size() + ' command(s) will be run:')
+        for (command in commands) {
+            qubeship.withQubeCredentials(command.credentialsMetadata) {
+                sh(script: command.fullQubeshipCommand)
+            }
+        }
     }
 }
 
