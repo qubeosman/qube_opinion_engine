@@ -28,10 +28,6 @@ node {
                 echo "replacing empty commit hash with refspec " + project.scm.refspec
                 commithash = project.scm.refspec
             }
-            String b64_encoded_qube_yaml = project.qubeYaml
-            byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
-            String qube_yaml = new String(b64_decoded)
-            //qubeConfig = getYaml(qube_yaml)
 
             // load owner info
             def owner = qubeApi(serverAddr: "https://api.qubeship.io", httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false)
@@ -49,10 +45,15 @@ node {
             sh (script: "rm -Rf qube_utils")
             sh (script: "git clone https://github.com/Qubeship/qube_utils qube_utils",
                 label:"Fetching qubeship scripts and templates")
-
-            qubeYamlFile = env.WORKSPACE + '/qube.yaml'
+            
+            // get the contents of qube.yaml not from the API but the file in the source repo
+            // String b64_encoded_qube_yaml = project.qubeYaml
+            // byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
+            // String qube_yaml = new String(b64_decoded)
+            // qubeConfig = getYaml(qube_yaml)
+            def qubeYamlFile = env.WORKSPACE + '/qube.yaml'
             qubeYamlString = sh(returnStdout: true, script: "cat $qubeYamlFile")
-            qubeConfig = getYaml(qubeYamlString);
+            qubeConfig = getYaml(qubeYamlString)
             initValidateQubeConfig(qubeConfig)
 
             // load toolchain
@@ -69,12 +70,10 @@ node {
             String b64_encoded_opinion_yaml = opinion.yaml
             b64_decoded = b64_encoded_opinion_yaml.decodeBase64()
             String opinion_yaml_str = new String(b64_decoded)
-            sh(returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml");
+            sh (returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml")
             sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
-            variableConfig = getConfig(env.WORKSPACE + "/variables.yaml");
-            println(variableConfig)
+            variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
             Object[] vars = getArray(variableConfig.variables)
-            println(qubeConfig['variables'])
             for( int i = 0; i<vars?.length; i++){ 
                 def var = vars[i];
                 String varName = var.name
@@ -127,18 +126,6 @@ def runStage(toolchain_img, stageObj, toolchain, qubeConfig) {
             error ("Stage ${stageObj.name} cannot be skipped!")
         }
     } else {
-        // Object[] taskList = getArray(stageObj.tasks)
-        // if (stageObj.name == 'build') {
-        //     // runBuildTasks(toolchain_img, taskList, toolchain, qubeConfig)
-        // // } else {
-        // } else if (stageObj.name == 'deploy_to_prod') {
-        //     println('here!')
-        //     for (int i = 0; i < taskList.length; i++) {
-        //         def task = taskList[i];
-        //         println(task.name)
-        //         runTask(toolchain_img, task, toolchain, qubeConfig)
-        //     }
-        // }
         Object[] taskList = getArray(stageObj.tasks)
         if (stageObj.name == 'build') {
             runBuildTasks(toolchain_img, taskList, toolchain, qubeConfig)
@@ -198,31 +185,19 @@ def runTask(toolchain_img, task, toolchain, qubeConfig) {
             }
         }
 
-        // cid = UUID.randomUUID().toString()
-        
-        println('****** In the task: ' + task.name)
-        println('Given the actions: ' + actions)
-        println('and the args: ' + args)
-        
-        echo qubeYamlFile
-
-        def commands = qubeCommand(actions: actions, args: args, 
-          serverAddr: 'https://api.qubeship.io',
-          globalVariablesMap: projectVariables,
-          qubeYamlString: qubeYamlString)
+        def commands = qubeCommand(
+            actions: actions,
+            args: args,
+            serverAddr: 'https://api.qubeship.io',
+            globalVariablesMap: projectVariables,
+            qubeYamlString: qubeYamlString)
         println(commands.size() + ' command(s) will be run:')
         for (command in commands) {
             println('credentialsMetadata.size(): ' + command.credentialsMetadata?.size());
             qubeship.withQubeCredentials(command.credentialsMetadata) {
-                // sh (script: 'ls -all')
-                // println(command.fullQubeshipCommand)
-                // sh (script: "echo $env.qubeship_e_58e57af22f9f07000b226def" )
-                // sh (script: "echo $env.BUILD_NUMBER" )
-                // input 'ready'
-                sh (returnStdout: true, script: command.fullQubeshipCommand)
+                sh (script: command.fullQubeshipCommand)
             }
         }
-        
     }
 }
 
