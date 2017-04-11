@@ -64,9 +64,15 @@ node {
             // load toolchain
             toolchain = qubeApi(httpMethod: "GET", resource: "toolchains", id: project.toolchainId, qubeClient: qubeClient)
             // find the URL and credentials of the registry where the toolchain image is
-            def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
-            toolchainRegistryUrl = toolchainRegistry.endPoint
-            toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
+            if (toolchain.endpointId) {
+                def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
+                toolchainRegistryUrl = toolchainRegistry.endPoint
+                toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
+            }
+            else {
+                toolchainRegistryUrl = 'https://gcr.io/'
+                toolchainRegistryCredentialsPath = 'gcr:qubeship-partners'
+            }
 
             // opinion
             opinion = qubeApi(httpMethod: "GET", resource: "opinions", id: project.opinionId, qubeClient: qubeClient)
@@ -105,7 +111,7 @@ node {
         }
 
         // TODO: find the way to get gcr credentials
-        docker.withRegistry(toolchainRegistryUrl, 'gcr:qubeship-partners') {
+        docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
             Object[] opinionList = getArray(opinion.opinionItems)
             process(opinionList, toolchain, qubeConfig)
         }
