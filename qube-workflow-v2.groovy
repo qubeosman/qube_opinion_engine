@@ -1,15 +1,20 @@
 import com.ca.io.qubeship.apis.QubeshipCommandResolver
 import org.yaml.snakeyaml.Yaml
 
-String tnt_guid = "${tenant_id}"
-String org_guid = "${org_id}"
-String project_id = "${project_id}"
+//String tnt_guid = "${tenant_id}"
+String tnt_guid = "${qube_tenant_id}"
+//String org_guid = "${org_id}"
+String org_guid = "${qube_org_id}"
+//String project_id = "${project_id}"
+String project_id = "${qube_project_id}"
 
 projectVariables = [:]
 qubeYamlString = ''
 
 node {
-    String commithash = "${commit_hash}"
+    // String commithash = "${commit_hash}"
+    String commithash = "${commithash}"
+    String refspec = "${refspec}"
 
     def project = null
     def toolchain = null
