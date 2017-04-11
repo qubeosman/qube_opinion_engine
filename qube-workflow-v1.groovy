@@ -6,17 +6,18 @@ import java.util.ArrayList;
 import java.io.Serializable;
 import com.cloudbees.plugins.credentials.domains.*;
 import java.util.HashMap;
+import org.yaml.snakeyaml.Yaml
 
 node {
   def notificationDomain = null
   def notificationChannel = null
   def notificationToken = null
   def notificationType = null
-  // notifyStarted()
+  def qubeConfig = null;
+  currentBuild.result = Result.SUCCESS
+
   try{
     stage 'Qubeship Initializing'
-    sh (script:'pwd > pwd.current','label':'Current workspace')
-    env.WORKSPACE = readFile('pwd.current')
 
     def isDryRun = "${dry_run}" == "true"
     def isQubeshipProject = "${is_qube_project}" == "true"
@@ -48,22 +49,16 @@ node {
      // short SHA, possibly better for chat notifications, etc.
     shorthash = gitCommit.take(6)
 
-     sh ( script:"pip install yaql",label:"Install pre-requisite")
     //sh (script: "apt-get install -y python-yaql")
     sh (script: "git clone https://github.com/Qubeship/qube_utils qube_utils",label:"Fetching qubeship scripts and templates")
-    sh (script: "git clone https://github.com/hoxu/gitstats",label:"Fetching gitstats script")
 
-    def workspace=env.WORKSPACE.replaceAll("[\n\r]", "")
-    //def jsonFile = "qube.json"
-    def yamlFile = "qube.yaml"
     def config_file = "qube.yaml"
-    //def config_file = sh ( returnStdout: true, script: 
-    //  "if [ -f qube.yaml ]; then echo qube.yaml; else echo qube.json; fi ",label:"Loading qube.yaml").replaceAll("[\n\r]", "")
-    notificationDomain = getValueFromConfigOptional(config_file,"notification.domain","")
-    notificationChannel = getValueFromConfigOptional(config_file,"notification.channel","general")
-    notificationType = getValueFromConfigOptional(config_file,"notification.type","")
 
-    notifyStarted(notificationChannel, notificationDomain, notificationType)
+    def workspace = env.WORKSPACE
+    def qubeYamlFile = env.WORKSPACE + '/'+ config_file
+    qubeConfig = getQubeConfig(qubeYamlFile);
+    
+    notifyStarted(qubeConfig)
 
     def appSvcName = "${appName}"
     def deploymentName="${appSvcName}-deployment"
@@ -140,10 +135,10 @@ node {
       return
     }
 
-    stage 'Secure overlay'
-    sh(script:"docker login -e 194749301684-compute@developer.gserviceaccount.com -u oauth2accesstoken -p \"\$(gcloud auth print-access-token)\" https://gcr.io && mkdir -p ${keys_loc}", label: "Authenticating to GCR")
 
     if(!skipOverlay) {
+      stage 'Secure overlay'
+      sh(script:"docker login -e 194749301684-compute@developer.gserviceaccount.com -u oauth2accesstoken -p \"\$(gcloud auth print-access-token)\" https://gcr.io && mkdir -p ${keys_loc}", label: "Authenticating to GCR")
       sh (script:"gsutil cp gs://artifacts.qubeship.appspot.com/keys/keys.tar.gz ${keys_loc}",label:"Fetching secure ceritificate")
       sh (script:"tar xvfz ${keys_loc}/keys.tar.gz -C ${keys_loc}",label:"Installing secure ceritificate on containers")
     }
@@ -175,14 +170,13 @@ node {
         sh ( script:"echo FROM $image > $dockerFile && \
         echo RUN mkdir -p /home/app >> $dockerFile && \
         echo WORKDIR /home/app >> $dockerFile && \
-        echo ENV QUBE_BUILD_VERSION=${imageVersion} >> $dockerFile && \
         echo ADD . /home/app >> $dockerFile",label:"Preparing docker file")
         for(String scriptStmt:scripts) {
           scriptStmt = scriptStmt.trim()
           sh(script:'echo RUN "' + scriptStmt + '" >> '+dockerFile,label:"Preparing docker file")
         }
         sh (script: 'cat ' + dockerFile ,label:"Preparing docker file")
-        sh(script:"docker build  -t ${appSvcName}-build -f ${dockerFile} .",label:"Building docker image")
+        sh(script:"docker build -t ${appSvcName}-build -f ${dockerFile} .",label:"Building docker image")
 
       }
     }
@@ -231,38 +225,36 @@ node {
       testApplication(appSvcName, functionalTestProvider)
     }
 
-    if (isCD) {
+    if (isCD && !skipDeployment) {
       stage 'Push image to registry'
       pushImageToRepositories(repositories, imageTag,isQubeshipProject);
 
-      if (!skipDeployment) {
-        stage 'Container Security Scan'
-        sh(script:"cat qube_utils/scan.txt",label:'Static Security Scan - Claire')
-        sh(script:"cat qube_utils/scan.txt",label:'Dynamic Security Scan - Twistlock')
+      stage 'Container Security Scan'
+      sh(script:"cat qube_utils/scan.txt",label:'Static Security Scan - Claire')
+      sh(script:"cat qube_utils/scan.txt",label:'Dynamic Security Scan - Twistlock')
 
-        stage 'approval to promote to prod'
-        if (!isContinuousDeployment) {
-          input 'Are you sure?'
-        } else {
-          echo "automated release to production  continuous_deployment : $isContinuousDeployment"
-        }
+      stage 'approval to promote to prod'
+      if (!isContinuousDeployment) {
+        input 'Are you sure?'
+      } else {
+        echo "automated release to production  continuous_deployment : $isContinuousDeployment"
+      }
 
-        stage "Release to Prod"
-        for (ProjectEnvironment env: envs.prodList) {
-          println (env.toString())
-          def imageToBeDeployed = env.repo.prefix + "/" + imageTag
-          deployApp(env, imageToBeDeployed)
-        }
+      stage "Release to Prod"
+      for (ProjectEnvironment env: envs.prodList) {
+        println (env.toString())
+        def imageToBeDeployed = env.repo.prefix + "/" + imageTag
+        deployApp(env, imageToBeDeployed)
       }
 
       // ************** TO BE REVISITED: for success/rollback each prod environment **************
       //stage "Baseline"
       //baselineDeployment(deploymentNSProd, deploymentName, 500, 'SECONDS')
     }
-    notifySuccessful(notificationChannel, notificationDomain, notificationType)
+    notifySuccessful(qubeConfig)
   }catch (e) {
-    currentBuild.result = "FAILED"
-    notifyFailed(notificationChannel, notificationDomain, notificationType)
+    currentBuild.result = Result.FAILURE
+    notifyFailed(qubeConfig)
     throw e
   }
 }
@@ -667,7 +659,7 @@ class ProjectEnvironment implements Serializable {
 
   def String toString() {
     def repoName = repo == null ? "n/a" : repo.name
-     return "uid: $uid / processingType: $processingType / templateId: $templateId / envCategory: $envCategory / provider: $targetEnvironment.provider / appName: $appName / repoName: $repoName";
+     return "uid: $uid / processingType: $processingType / templateId: $templateId / envCategory: $envCategory / provider: $targetEnvironment.provider / appName: $appName / repoName: $repoName / credentialId: ";
   }
 }
 
@@ -863,29 +855,37 @@ def debugEnvironments(envs) {
     println "############ end of target environments ############"
 }
 
-def notifyStarted(channel, domain, notificationType) {
+def notifyStarted(qubeConfig) {
   def msg = "Iteration ${env.JOB_NAME} # ${env.BUILD_NUMBER}  STARTED"
-  if (notificationType?.trim() == "slack") {
-     notifySlack("#FFFF00",msg, domain, channel)
+  if (qubeConfig.notification?.type?.trim() == "slack") {
+     notifySlack("#FFFF00",msg, qubeConfig)
   }
 }
 
-def notifySuccessful(channel, domain, notificationType) {
+def notifySuccessful(qubeConfig) {
   def msg = "SUCCESS - Iteration  ${env.JOB_NAME} # ${env.BUILD_NUMBER} sucessfully deployed to https://try.qubeship.io"
-  if (notificationType?.trim() == "slack") {
-     notifySlack("#FF0000", msg, domain, channel)
+  if (qubeConfig.notification?.type?.trim() == "slack") {
+      notifySlack("#00FF00",msg, qubeConfig)
+  }
+}
+@NonCPS
+def getCurrentBuild () {
+  def job = Jenkins.instance.getItemByFullName(env.JOB_BASE_NAME, hudson.model.Job.class)
+  return job?.getBuildByNumber(Integer.parseInt(env.BUILD_NUMBER))
+ 
+}
+def notifyFailed(qubeConfig){
+  def msg =  currentBuild?.result?.toString() + " - Iteration ${env.JOB_NAME} # ${env.BUILD_NUMBER} "  
+  if (qubeConfig.notification?.type?.trim() == "slack") {
+       notifySlack("#FF0000", msg,  qubeConfig)
   }
 }
 
-def notifyFailed(channel, domain, notificationType) {
-  def msg =  "FAILED - Iteration ${env.JOB_NAME} # ${env.BUILD_NUMBER} "
+def notifySlack(color, message, qubeConfig) {
+  domain =  qubeConfig.notification?.domain
+  channel = qubeConfig.notification?.channel
 
-  if (notificationType?.trim() == "slack") {
-     notifySlack("#FF0000", msg, domain, channel)
-  }
-}
-
-def notifySlack(color, message, domain, channel) {
+  
   if (domain == null || 
     domain?.trim().equals("null") || 
     domain?.trim().length() == 0 ) {
@@ -896,5 +896,24 @@ def notifySlack(color, message, domain, channel) {
   withCredentials([[$class: 'StringBinding', credentialsId: credKey, variable: 'NOTIFICATION_TOKEN']]) {
     slackSend (color: color, message: "$message ${env.JOB_NAME} # ${env.BUILD_NUMBER} ",
       channel: "#" + channel, teamDomain: domain, token:env.NOTIFICATION_TOKEN)
+  }
+}
+
+
+
+def getQubeConfig(file) {
+  def result = sh(returnStdout: true, script: "cat $file");
+  def yaml = new Yaml();
+  def config = yaml.load(result) ;
+  initValidateQubeConfig(config)
+
+  return config
+}
+def isEmpty (value) {
+  return (value == null|| value?.trim().length() == 0 )
+} 
+def initValidateQubeConfig(qubeConfig) {
+  if(isEmpty(qubeConfig.notification?.channel)) {
+      qubeConfig.notification?.channel == "general"
   }
 }
