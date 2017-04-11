@@ -25,7 +25,7 @@ node {
     String toolchainRegistryUrl = ""
     String toolchainRegistryCredentialsPath = ""
 
-    qubeship.inQubeshipTenancy(tnt_guid, org_guid, "http://mock-api.qubeship.io") { qubeClient ->
+    qubeship.inQubeshipTenancy(tnt_guid, org_guid, "https://api.qubeship.io") { qubeClient ->
         stage("init") {
             // load project
             project = qubeApi(httpMethod: "GET", resource: "projects", id: "${project_id}", qubeClient: qubeClient)
@@ -35,7 +35,7 @@ node {
             }
 
             // load owner info
-            def owner = qubeApi(serverAddr: "https://api.qubeship.io", httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false)
+            def owner = qubeApi(httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false, qubeClient: qubeClient)
 
             // checkout
             String owner_credentials_id = "qubeship:usercredentials:" + owner.credential
