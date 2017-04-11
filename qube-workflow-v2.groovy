@@ -64,8 +64,8 @@ node {
             // load toolchain
             toolchain = qubeApi(httpMethod: "GET", resource: "toolchains", id: project.toolchainId, qubeClient: qubeClient)
             // find the URL and credentials of the registry where the toolchain image is
-            if (toolchain.endpointId) {
-                def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
+            def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
+            if (toolchainRegistry) {
                 toolchainRegistryUrl = toolchainRegistry.endPoint
                 toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
             }
