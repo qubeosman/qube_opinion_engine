@@ -94,8 +94,9 @@ node {
                 if (!optional && !value) {
                     error (String.format("Required variable(s) %s missing!", varName))
                 }
-                projectVariables.put(varName, value)
-
+                if (value?.trim()) {
+                    projectVariables.put(varName, value)
+                }
             }
 
             // resolve all qubeship args in projectVariables
