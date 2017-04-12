@@ -102,14 +102,6 @@ node {
             // resolve all qubeship args in projectVariables
             projectVariables = qubeship.resolveVariables('https://api.qubeship.io', tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
         }
-        
-        for (var in projectVariables) {
-            println('*****************')
-            println(var.key)
-            println(var.value.first.value)
-            println(var.value.second)
-            println('*****************')
-        }
 
         // TODO: find the way to get gcr credentials
         docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
