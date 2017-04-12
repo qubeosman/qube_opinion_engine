@@ -316,6 +316,7 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
     sh(script: 'cat ' + dockerFile)
 
     String buiderImageTag = project_name + "-build"
+    buiderImageTag = buiderImageTag.replaceAll("\s+|_+", "-").toLowerCase()
     sh(script: "docker build -t ${buiderImageTag} -f ${dockerFile} .")
 
     return buiderImageTag
