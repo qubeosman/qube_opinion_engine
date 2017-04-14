@@ -1,20 +1,17 @@
 import com.ca.io.qubeship.apis.QubeshipCommandResolver
+import com.ca.io.qubeship.client.model.opinions.Opinion
+import com.ca.io.qubeship.utils.GramlClient
 import org.yaml.snakeyaml.Yaml
 
-//String tnt_guid = "${tenant_id}"
 String tnt_guid = "${qube_tenant_id}"
-//String org_guid = "${org_id}"
 String org_guid = "${qube_org_id}"
-//String project_id = "${project_id}"
 String project_id = "${qube_project_id}"
 
 projectVariables = [:]
 qubeYamlString = ''
 
 node {
-    // String commithash = "${commit_hash}"
     String commithash = "${commithash}"
-    String refspec = "${refspec}"
 
     def project = null
     def toolchain = null
@@ -24,6 +21,8 @@ node {
 
     String toolchainRegistryUrl = ""
     String toolchainRegistryCredentialsPath = ""
+
+    def opinionList = []
 
     qubeship.inQubeshipTenancy(tnt_guid, org_guid, "https://api.qubeship.io") { qubeClient ->
         stage("init") {
@@ -47,8 +46,8 @@ node {
                     refspec: project.scm.refspec
                 ]]
             ]
-            sh (script: "rm -Rf qube_utils")
-            sh (script: "git clone https://github.com/Qubeship/qube_utils qube_utils",
+            // sh (script: "rm -Rf qube_utils")
+            sh (script: "if [ ! -d qube_utils ]; then git clone https://github.com/Qubeship/qube_utils qube_utils; fi",
                 label:"Fetching qubeship scripts and templates")
             
             // get the contents of qube.yaml not from the API but the file in the source repo
@@ -57,7 +56,7 @@ node {
             // String qube_yaml = new String(b64_decoded)
             // qubeConfig = getYaml(qube_yaml)
             def qubeYamlFile = env.WORKSPACE + '/qube.yaml'
-            qubeYamlString = sh(returnStdout: true, script: "cat $qubeYamlFile")
+            qubeYamlString = sh(returnStdout: true, script: "if [ -e $qubeYamlFile ]; then cat $qubeYamlFile; fi")
             qubeConfig = getYaml(qubeYamlString)
             initValidateQubeConfig(qubeConfig)
 
@@ -74,14 +73,21 @@ node {
                 toolchainRegistryCredentialsPath = 'gcr:qubeship-partners'
             }
 
-            // opinion
-            opinion = qubeApi(httpMethod: "GET", resource: "opinions", id: project.opinionId, qubeClient: qubeClient)
-
-            // abort the build if any required variable is missing
-            String b64_encoded_opinion_yaml = opinion.yaml
-            b64_decoded = b64_encoded_opinion_yaml.decodeBase64()
-            String opinion_yaml_str = new String(b64_decoded)
-            sh (returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml")
+            // TODO: opinion file name may be different
+            String opinionYamlFilePath = env.WORKSPACE + '/opinion.yaml'
+            String opinionYamlString = sh(returnStdout: true, script: "if [ -e $opinionYamlFilePath ]; then cat $opinionYamlFilePath; fi")
+            if (opinionYamlString?.trim()) {
+                GramlClient gramlClient = new GramlClient(opinionYamlString)
+                opinionList = getArray(gramlClient.getStages(gramlClient.getStart("build")))
+            }
+            else {
+                // opinion
+                opinion = qubeApi(httpMethod: "GET", resource: "opinions", id: project.opinionId, qubeClient: qubeClient)
+                String b64_encoded_opinion_yaml = opinion.yaml
+                sh (returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml")
+                opinionList = getArray(opinion.opinionItems)
+            }
+            
             sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
             variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
             Object[] vars = getArray(variableConfig.variables)
@@ -105,25 +111,24 @@ node {
 
         // TODO: find the way to get gcr credentials
         docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
-            Object[] opinionList = getArray(opinion.opinionItems)
-            process(opinionList, toolchain, qubeConfig)
+            process(opinionList, toolchain, qubeConfig, qubeClient)
         }
     }
 }
 
-def process(opinionList, toolchain, qubeConfig) {
+def process(opinionList, toolchain, qubeConfig, qubeClient) {
     def toolchain_prefix = "gcr.io/qubeship-partners/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     
     for (int i=0; i<opinionList.length; i++){
         def item = opinionList[i];
         stage(item.name) {
-            runStage(toolchain_img, item, toolchain, qubeConfig)
+            runStage(toolchain_img, item, toolchain, qubeConfig, qubeClient)
         }
     }   
 }
 
-def runStage(toolchain_img, stageObj, toolchain, qubeConfig) {
+def runStage(toolchain_img, stageObj, toolchain, qubeConfig, qubeClient) {
     // skip if the stage is skippable or throw error
     if ('skip' in qubeConfig[stageObj.name] && qubeConfig[stageObj.name]['skip']) {
         if (!stageObj.properties.skippable) {
@@ -136,13 +141,13 @@ def runStage(toolchain_img, stageObj, toolchain, qubeConfig) {
         } else {
             for (int i = 0; i < taskList.length; i++) {
                 def task = taskList[i];
-                runTask(toolchain_img, task, toolchain, qubeConfig)
+                runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient)
             }
         }
     }
 }
 
-def runTask(toolchain_img, task, toolchain, qubeConfig) {
+def runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient) {
     def taskDefInProject = null
     if (task.parent.name in qubeConfig && task.name in qubeConfig[task.parent.name]) {
         taskDefInProject = qubeConfig[task.parent.name][task.name]
@@ -157,6 +162,7 @@ def runTask(toolchain_img, task, toolchain, qubeConfig) {
         // lookup in toolchain
         taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
 
+        // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
         def actions = []
         if (taskDefInProject?.actions) {
             // action arg1 arg2 ...
@@ -164,14 +170,16 @@ def runTask(toolchain_img, task, toolchain, qubeConfig) {
                 // actions.add(action)
                 actions << action
             }
+        } else if (taskInToolchain?.trim() && !task.execute_outside_toolchain) {
+            actions << taskInToolchain
         } else if (task.actions) {
             for (action in task.actions) {
                 // actions.add(action)
                 actions << action
             }
-        } else {
-            // actions.add(taskInToolchain)
-            actions << taskInToolchain
+        }
+        if (actions.empty) {
+            error ('no action is defined for task: ' + task.name)
         }
 
         def args = [:]
@@ -192,7 +200,7 @@ def runTask(toolchain_img, task, toolchain, qubeConfig) {
         def commands = qubeCommand(
             actions: actions,
             args: args,
-            serverAddr: 'https://api.qubeship.io',
+            qubeClient: qubeClient,
             globalVariablesMap: projectVariables,
             qubeYamlString: qubeYamlString)
         println(commands.size() + ' command(s) will be run:')
