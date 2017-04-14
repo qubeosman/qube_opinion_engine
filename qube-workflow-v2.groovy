@@ -170,7 +170,7 @@ def runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient) {
                 // actions.add(action)
                 actions << action
             }
-        } else if (taskInToolchain?.trim() && !task.execute_outside_toolchain) {
+        } else if (taskInToolchain?.trim() && task.get('execute_outside_toolchain', false)) {
             actions << taskInToolchain
         } else if (task.actions) {
             for (action in task.actions) {
