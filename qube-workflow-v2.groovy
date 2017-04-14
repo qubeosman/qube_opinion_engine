@@ -106,24 +106,24 @@ node {
         // TODO: find the way to get gcr credentials
         docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
             Object[] opinionList = getArray(opinion.opinionItems)
-            process(opinionList, toolchain, qubeConfig)
+            process(opinionList, toolchain, qubeConfig, qubeClient)
         }
     }
 }
 
-def process(opinionList, toolchain, qubeConfig) {
+def process(opinionList, toolchain, qubeConfig, qubeClient) {
     def toolchain_prefix = "gcr.io/qubeship-partners/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     
     for (int i=0; i<opinionList.length; i++){
         def item = opinionList[i];
         stage(item.name) {
-            runStage(toolchain_img, item, toolchain, qubeConfig)
+            runStage(toolchain_img, item, toolchain, qubeConfig, qubeClient)
         }
     }   
 }
 
-def runStage(toolchain_img, stageObj, toolchain, qubeConfig) {
+def runStage(toolchain_img, stageObj, toolchain, qubeConfig, qubeClient) {
     // skip if the stage is skippable or throw error
     if ('skip' in qubeConfig[stageObj.name] && qubeConfig[stageObj.name]['skip']) {
         if (!stageObj.properties.skippable) {
@@ -136,13 +136,13 @@ def runStage(toolchain_img, stageObj, toolchain, qubeConfig) {
         } else {
             for (int i = 0; i < taskList.length; i++) {
                 def task = taskList[i];
-                runTask(toolchain_img, task, toolchain, qubeConfig)
+                runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient)
             }
         }
     }
 }
 
-def runTask(toolchain_img, task, toolchain, qubeConfig) {
+def runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient) {
     def taskDefInProject = null
     if (task.parent.name in qubeConfig && task.name in qubeConfig[task.parent.name]) {
         taskDefInProject = qubeConfig[task.parent.name][task.name]
@@ -157,6 +157,7 @@ def runTask(toolchain_img, task, toolchain, qubeConfig) {
         // lookup in toolchain
         taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
 
+        // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
         def actions = []
         if (taskDefInProject?.actions) {
             // action arg1 arg2 ...
@@ -164,14 +165,16 @@ def runTask(toolchain_img, task, toolchain, qubeConfig) {
                 // actions.add(action)
                 actions << action
             }
+        } else if (taskInToolchain?.trim()) {
+            actions << taskInToolchain
         } else if (task.actions) {
             for (action in task.actions) {
                 // actions.add(action)
                 actions << action
             }
-        } else {
-            // actions.add(taskInToolchain)
-            actions << taskInToolchain
+        }
+        if (actions.empty) {
+            error ('no action is defined for task: ' + task.name)
         }
 
         def args = [:]
@@ -192,7 +195,7 @@ def runTask(toolchain_img, task, toolchain, qubeConfig) {
         def commands = qubeCommand(
             actions: actions,
             args: args,
-            serverAddr: 'https://api.qubeship.io',
+            qubeClient: qubeClient,
             globalVariablesMap: projectVariables,
             qubeYamlString: qubeYamlString)
         println(commands.size() + ' command(s) will be run:')
