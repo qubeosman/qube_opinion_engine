@@ -47,7 +47,7 @@ node {
                 ]]
             ]
             // sh (script: "rm -Rf qube_utils")
-            sh (script: "if [ ! -d qube_utils ]; then git clone https://github.com/Qubeship/qube_utils qube_utils; fi",
+            sh (script: "if [ ! -d qube_utils ]; then git clone https://github.com/Qubeship/qube_utils qube_utils; else cd qube_utils; git pull; cd -; fi",
                 label:"Fetching qubeship scripts and templates")
             
             // get the contents of qube.yaml not from the API but the file in the source repo
