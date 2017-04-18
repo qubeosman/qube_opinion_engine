@@ -119,16 +119,22 @@ node {
 def process(opinionList, toolchain, qubeConfig, qubeClient) {
     def toolchain_prefix = "gcr.io/qubeship-partners/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
-    
-    for (int i=0; i<opinionList.length; i++){
-        def item = opinionList[i];
-        stage(item.name) {
-            runStage(toolchain_img, item, toolchain, qubeConfig, qubeClient)
+    String projectName = qubeConfig['name']
+    String workdir = "/home/app"
+    def builderImage = docker.image(
+        prepareDockerFileForBuild(toolchain_img, projectName, workdir))
+
+    builderImage.withRun("", "/bin/sh -c \"while true; do sleep 2; done\"") { container ->
+        for (int i = 0; i < opinionList.length; i++) {
+            def item = opinionList[i];
+            stage(item.name) {
+                runStage(item, toolchain, qubeConfig, qubeClient, container, workdir)
+            }
         }
-    }   
+    }
 }
 
-def runStage(toolchain_img, stageObj, toolchain, qubeConfig, qubeClient) {
+def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
     // skip if the stage is skippable or throw error
     if ('skip' in qubeConfig[stageObj.name] && qubeConfig[stageObj.name]['skip']) {
         if (!stageObj.properties.skippable) {
@@ -136,18 +142,14 @@ def runStage(toolchain_img, stageObj, toolchain, qubeConfig, qubeClient) {
         }
     } else {
         Object[] taskList = getArray(stageObj.tasks)
-        if (stageObj.name == 'build') {
-            runBuildTasks(toolchain_img, taskList, toolchain, qubeConfig)
-        } else {
-            for (int i = 0; i < taskList.length; i++) {
-                def task = taskList[i];
-                runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient)
-            }
+        for (int i = 0; i < taskList.length; i++) {
+            def task = taskList[i];
+            runTask(task, toolchain, qubeConfig, qubeClient, container, workdir)
         }
     }
 }
 
-def runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient) {
+def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=null) {
     def taskDefInProject = null
     if (task.parent.name in qubeConfig && task.name in qubeConfig[task.parent.name]) {
         taskDefInProject = qubeConfig[task.parent.name][task.name]
@@ -161,6 +163,8 @@ def runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient) {
     } else {
         // lookup in toolchain
         taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
+        boolean executeOutsideToolchain = task.properties.get("execute_outside_toolchain", false)
+        boolean executeInToolchain = !executeOutsideToolchain
 
         // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
         def actions = []
@@ -170,7 +174,7 @@ def runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient) {
                 // actions.add(action)
                 actions << action
             }
-        } else if (taskInToolchain?.trim() && task.properties.get("execute_outside_toolchain", false)) {
+        } else if (taskInToolchain?.trim()) {
             actions << taskInToolchain
         } else if (task.actions) {
             for (action in task.actions) {
@@ -207,7 +211,18 @@ def runTask(toolchain_img, task, toolchain, qubeConfig, qubeClient) {
         for (command in commands) {
             println('credentialsMetadata.size(): ' + command.credentialsMetadata?.size());
             qubeship.withQubeCredentials(command.credentialsMetadata) {
-                sh (script: command.fullQubeshipCommand)
+                String scriptStmt = command.fullQubeshipCommand
+                if (executeInToolchain) {
+                    scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
+                }
+                sh (script: scriptStmt)
+            }
+        }
+
+        if (taskDefInProject?.publish && executeInToolchain) {
+            for (artifact in taskDefInProject.publish) {
+                def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
+                sh(script: copyStatement, label:"Transfering artifacts from container")
             }
         }
     }
@@ -241,66 +256,6 @@ def initValidateQubeConfig(qubeConfig) {
   if(isEmpty(qubeConfig.notification?.channel)) {
       qubeConfig.notification?.channel == "general"
   }
-}
-
-def runBuildTasks(toolchain_img, taskList, toolchain, qubeConfig) {
-    String projectName = qubeConfig['name']
-    String workdir = "/home/app"
-    def builderImage = docker.image(
-        prepareDockerFileForBuild(toolchain_img, projectName, workdir))
-
-    builderImage.withRun("", "/bin/sh -c \"while true; do sleep 2; done\"") { container ->
-        for (int i=0; i < taskList.length; i++) {
-            List<String> scripts = new ArrayList<String>()
-
-            def task = taskList[i];
-            def taskDefInProject = qubeConfig[task.parent.name][task.name]
-            def taskInToolchain = toolchain.manifestObject[task.parent.name+"."+task.name]
-
-            List<String> actions = new ArrayList<String>();
-            if (taskDefInProject?.actions) {
-                // action arg1 arg2 ...
-                for (action in taskDefInProject.actions) {
-                    actions.add(action)
-                }
-            } else {
-                actions.add(taskInToolchain)
-            }
-
-            String args = ""
-            if (taskDefInProject?.args) {
-                for (arg in taskDefInProject.args) {
-                    args = args + " ${arg}"
-                }
-            }
-
-            List<String> published_artifacts = new ArrayList<String>()
-            if (taskDefInProject?.publish) {
-                for (p in taskDefInProject.publish) {
-                    published_artifacts.add(p)
-                }
-            }
-
-            String command = null
-            for (String action: actions) {
-                String fullAction = action + " " + args
-                command = (command == null) ? fullAction :  command + " && " + fullAction
-
-                scripts.add(command)
-            }
-
-            for (String scriptStmt : scripts) {
-                scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
-                sh(script: scriptStmt)
-
-                for (String artifact : published_artifacts) {
-                    def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
-                    sh(script: copyStatement, label:"Transfering artifacts from container")
-
-                }
-            }
-        }
-    }
 }
 
 def prepareDockerFileForBuild(image, project_name, workdir) {
