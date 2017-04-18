@@ -128,7 +128,7 @@ def process(opinionList, toolchain, qubeConfig, qubeClient) {
         for (int i = 0; i < opinionList.length; i++) {
             def item = opinionList[i];
             stage(item.name) {
-                runStage(toolchain_img, item, toolchain, qubeConfig, qubeClient, container, workdir)
+                runStage(item, toolchain, qubeConfig, qubeClient, container, workdir)
             }
         }
     }
