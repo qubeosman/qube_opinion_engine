@@ -164,6 +164,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
         // lookup in toolchain
         taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
         boolean executeOutsideToolchain = task.properties.get("execute_outside_toolchain", false)
+        boolean executeInToolchain = !executeOutsideToolchain
 
         // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
         def actions = []
@@ -173,7 +174,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                 // actions.add(action)
                 actions << action
             }
-        } else if (taskInToolchain?.trim() && !executeOutsideToolchain) {
+        } else if (taskInToolchain?.trim()) {
             actions << taskInToolchain
         } else if (task.actions) {
             for (action in task.actions) {
@@ -218,7 +219,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             println('credentialsMetadata.size(): ' + command.credentialsMetadata?.size());
             qubeship.withQubeCredentials(command.credentialsMetadata) {
                 String scriptStmt = command.fullQubeshipCommand
-                if (!executeOutsideToolchain) {
+                if (executeInToolchain) {
                     scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
                 }
                 sh (script: scriptStmt)
