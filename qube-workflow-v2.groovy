@@ -201,13 +201,6 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             }
         }
 
-        List<String> published_artifacts = new ArrayList<String>()
-        if (taskDefInProject?.publish) {
-            for (p in taskDefInProject.publish) {
-                published_artifacts.add(p)
-            }
-        }
-
         def commands = qubeCommand(
             actions: actions,
             args: args,
@@ -223,13 +216,13 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
                 }
                 sh (script: scriptStmt)
+            }
+        }
 
-                def numArtifacts = published_artifacts?.size()
-                for (i = 0; i < numArtifacts; i++) {
-                    def artifact = published_artifacts[i]
-                    def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
-                    sh(script: copyStatement, label:"Transfering artifacts from container")
-                }
+        if (taskDefInProject?.publish && executeInToolchain) {
+            for (artifact in taskDefInProject.publish) {
+                def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
+                sh(script: copyStatement, label:"Transfering artifacts from container")
             }
         }
     }
