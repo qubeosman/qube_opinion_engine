@@ -161,10 +161,13 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             error ("Task ${task.name} cannot be skipped!")
         }
     } else {
+        boolean defaultExecuteOutsideToolchainPreference = (task.parent.name != 'build')
         // lookup in toolchain
         taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
-        boolean executeOutsideToolchain = task.properties.get("execute_outside_toolchain", false)
+        boolean executeOutsideToolchain = task.properties.get("execute_outside_toolchain", defaultExecuteOutsideToolchainPreference)
         boolean executeInToolchain = !executeOutsideToolchain
+
+        println('running inside toolchain? ' + executeInToolchain)
 
         // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
         def actions = []
