@@ -122,14 +122,14 @@ node {
             def payloadImageId = """{
                 \"type\": \"image\",
                 \"contentType\": \"text/plain\",
-                \"title\": \"Image ID\",
+                \"title\": \"${artifactsImageId}\",
                 \"url\": \"${artifactsImageId}\",
                 \"isResource\": false
             }"""
             def payloadLogURL = """{
                 \"type\": \"log\",
                 \"contentType\": \"text/plain\",
-                \"title\": \"Full Log URL\",
+                \"title\": \"Full Log\",
                 \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
                 \"isResource\": true
             }"""
