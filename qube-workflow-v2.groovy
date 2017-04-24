@@ -119,20 +119,20 @@ node {
         }
 
         stage('Publish Artifacts') {
-            def payloadImageId = '''{
-                "type": "log",
-                "contentType": "text/plain",
-                "title": "Image ID",
-                "url": "${artifactsImageId}",
-                "isResource": false
-            }'''
-            def payloadLogURL = '''{
-                "type": "log",
-                "contentType": "text/plain",
-                "title": "Full Log URL",
-                "url": "${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs",
-                "isResource": true
-            }'''
+            def payloadImageId = """{
+                \"type\": \"image\",
+                \"contentType\": \"text/plain\",
+                \"title\": \"Image ID\",
+                \"url\": \"${artifactsImageId}\",
+                \"isResource\": false
+            }"""
+            def payloadLogURL = """{
+                \"type\": \"log\",
+                \"contentType\": \"text/plain\",
+                \"title\": \"Full Log URL\",
+                \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                \"isResource\": true
+            }"""
             String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
             qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
             qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
