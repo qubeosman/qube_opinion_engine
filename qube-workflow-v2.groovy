@@ -10,6 +10,8 @@ String project_id = "${qube_project_id}"
 projectVariables = [:]
 qubeYamlString = ''
 
+artifactsImageId = ''
+
 node {
     String commithash = "${commithash}"
 
@@ -24,7 +26,9 @@ node {
 
     def opinionList = []
 
-    qubeship.inQubeshipTenancy(tnt_guid, org_guid, "https://api.qubeship.io") { qubeClient ->
+    String qubeshipUrl = 'https://api.qubeship.io'
+
+    qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
         stage("init") {
             // load project
             project = qubeApi(httpMethod: "GET", resource: "projects", id: "${project_id}", qubeClient: qubeClient)
@@ -106,12 +110,32 @@ node {
             }
 
             // resolve all qubeship args in projectVariables
-            projectVariables = qubeship.resolveVariables('https://api.qubeship.io', tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
+            projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
         }
 
         // TODO: find the way to get gcr credentials
         docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
             process(opinionList, toolchain, qubeConfig, qubeClient)
+        }
+
+        stage('Publish Artifacts') {
+            def payloadImageId = """{
+                \"type\": \"image\",
+                \"contentType\": \"text/plain\",
+                \"title\": \"${artifactsImageId}\",
+                \"url\": \"${artifactsImageId}\",
+                \"isResource\": false
+            }"""
+            def payloadLogURL = """{
+                \"type\": \"log\",
+                \"contentType\": \"text/plain\",
+                \"title\": \"Full Log\",
+                \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                \"isResource\": true
+            }"""
+            String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
+            qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+            qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
         }
     }
 }
@@ -124,7 +148,7 @@ def process(opinionList, toolchain, qubeConfig, qubeClient) {
     def builderImage = docker.image(
         prepareDockerFileForBuild(toolchain_img, projectName, workdir))
 
-    builderImage.withRun("", "/bin/sh -c \"while true; do sleep 2; done\"") { container ->
+    builderImage.withRun("", "tail -f /dev/null") { container ->
         for (int i = 0; i < opinionList.length; i++) {
             def item = opinionList[i];
             stage(item.name) {
@@ -163,12 +187,12 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
     } else {
         boolean defaultExecuteOutsideToolchainPreference = (task.parent.name != 'build')
         println('defaultExecuteOutsideToolchainPreference: ' + defaultExecuteOutsideToolchainPreference)
-        // lookup in toolchain
-        taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
         boolean executeOutsideToolchain = task.properties.get('execute_outside_toolchain') ?:defaultExecuteOutsideToolchainPreference
         boolean executeInToolchain = !executeOutsideToolchain
-
         println('running inside toolchain? ' + executeInToolchain)
+
+        // lookup in toolchain
+        taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
 
         // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
         def actions = []
@@ -220,6 +244,9 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
                 }
                 sh (script: scriptStmt)
+                if (scriptStmt.contains('docker push')) {
+                    artifactsImageId = scriptStmt.tokenize(' ').last()
+                }
             }
         }
 
