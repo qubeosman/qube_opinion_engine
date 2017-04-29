@@ -26,8 +26,9 @@ node {
 
     def opinionList = []
 
-    String qubeshipUrl = ''
-
+    String qubeshipUrl = "${env.QUBE_SERVER}"
+    println("qubeshipUrl is " + qubeshipUrl)
+    
     qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
         stage("init") {
             // load project
