@@ -74,8 +74,10 @@ node {
                 toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
             }
             else {
-                toolchainRegistryUrl = 'https://gcr.io/'
-                toolchainRegistryCredentialsPath = 'gcr:qubeship-partners'
+                toolchainRegistryUrl = 'https://index.docker.io/'
+                toolchainRegistryCredentialsPath = null
+                #toolchainRegistryUrl = 'https://gcr.io/'
+                #toolchainRegistryCredentialsPath = 'gcr:qubeship-partners'
             }
 
             // TODO: opinion file name may be different
@@ -142,7 +144,8 @@ node {
 }
 
 def process(opinionList, toolchain, qubeConfig, qubeClient) {
-    def toolchain_prefix = "gcr.io/qubeship-partners/"
+    #def toolchain_prefix = "gcr.io/qubeship-partners/"
+    def toolchain_prefix = "qubeship/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     String projectName = qubeConfig['name']
     String workdir = "/home/app"
