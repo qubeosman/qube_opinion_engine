@@ -8,6 +8,7 @@ String org_guid = "${qube_org_id}"
 String project_id = "${qube_project_id}"
 
 projectVariables = [:]
+envVars = null
 qubeYamlString = ''
 
 artifactsImageId = ''
@@ -114,6 +115,19 @@ node {
 
             // resolve all qubeship args in projectVariables
             projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
+            envVars = qubeship.getEnvVars()
+
+            if (envVars != null && projectVariables != null) {
+                for (qubeshipVariable in projectVariables) {
+                    if (qubeshipVariable.getFirst().getType() in String) {
+                        String envKey = qubeshipVariable.getFirst.getKey()
+                        String envToBeExported = qubeshipVariable.getFirst.getValue()
+                        if (envToBeExported) {
+                            envVars.put(envKey, envToBeExported)
+                        }
+                    }
+                }
+            }
         }
 
         // TODO: find the way to get gcr credentials
@@ -302,6 +316,14 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
     echo WORKDIR ${workdir} >> ${dockerFile} && \
     echo ENV QUBE_BUILD_VERSION=${imageVersion} >> ${dockerFile} && \
     echo ADD . ${workdir} >> ${dockerFile}")
+
+    for (qubeshipVariable in projectVariables) {
+        if (qubeshipVariable.getFirst().getType() in String) {
+            String envKey = qubeshipVariable.getFirst.getKey()
+            String envToBeExported = qubeshipVariable.getFirst.getValue()
+            sh(script: "echo ENV ${envKey}=${envToBeExported} >> ${dockerFile}") 
+        }
+    }
 
     sh(script: 'cat ' + dockerFile)
 
