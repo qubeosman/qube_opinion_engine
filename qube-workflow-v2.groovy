@@ -119,9 +119,9 @@ node {
 
             if (envVars != null && projectVariables != null) {
                 for (qubeshipVariable in projectVariables) {
-                    if (qubeshipVariable.getFirst().getType() in String) {
-                        String envKey = qubeshipVariable.getFirst().getKey()
-                        String envToBeExported = qubeshipVariable.getFirst().getValue()
+                    if (qubeshipVariable.value.getType() in String) {
+                        String envKey = qubeshipVariable.value.getKey()
+                        String envToBeExported = qubeshipVariable.value.getValue()
                         if (envToBeExported) {
                             envVars.put(envKey, envToBeExported)
                         }
@@ -318,9 +318,9 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
     echo ADD . ${workdir} >> ${dockerFile}")
 
     for (qubeshipVariable in projectVariables) {
-        if (qubeshipVariable.getFirst().getType() in String) {
-            String envKey = qubeshipVariable.getFirst().getKey()
-            String envToBeExported = qubeshipVariable.getFirst().getValue()
+        if (qubeshipVariable.value.getType() in String) {
+            String envKey = qubeshipVariable.value.getKey()
+            String envToBeExported = qubeshipVariable.value.getValue()
             sh(script: "echo ENV ${envKey}=${envToBeExported} >> ${dockerFile}") 
         }
     }
