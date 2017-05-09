@@ -317,16 +317,16 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
     echo ENV QUBE_BUILD_VERSION=${imageVersion} >> ${dockerFile} && \
     echo ADD . ${workdir} >> ${dockerFile}")
 
-    for (qubeshipVariable in projectVariables) {
-        if (qubeshipVariable.value.getFirst().getType() in String) {
-            String envKey = qubeshipVariable.key
-            String envToBeExported = qubeshipVariable.value.getFirst().getValue()
-            if (envToBeExported) {
-                echo "echo ENV ${envKey} ${envToBeExported}"
-                sh(script: "echo ENV ${envKey} ${envToBeExported} >> ${dockerFile}")
-            }
-        }
-    }
+    // for (qubeshipVariable in projectVariables) {
+    //     if (qubeshipVariable.value.getFirst().getType() in String) {
+    //         String envKey = qubeshipVariable.key
+    //         String envToBeExported = qubeshipVariable.value.getFirst().getValue()
+    //         if (envToBeExported) {
+    //             echo "echo ENV ${envKey} ${envToBeExported}"
+    //             sh(script: "echo ENV ${envKey} ${envToBeExported} >> ${dockerFile}")
+    //         }
+    //     }
+    // }
 
     sh(script: 'cat ' + dockerFile)
 
