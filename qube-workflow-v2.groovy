@@ -319,7 +319,7 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
     echo ADD . ${workdir} >> ${dockerFile}")
 
     for (qubeshipVariable in projectVariables) {
-        if (qubeshipVariable.value.getType() in String) {
+        if (qubeshipVariable.value.getFirst().getType() in String) {
             String envKey = qubeshipVariable.key
             String envToBeExported = qubeshipVariable.value.getFirst().getValue()
             sh(script: "echo ENV ${envKey}=${envToBeExported} >> ${dockerFile}") 
