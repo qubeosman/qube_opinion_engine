@@ -116,7 +116,7 @@ node {
             // resolve all qubeship args in projectVariables
             projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
             envVars = qubeship.getEnvVars()
-
+            envVarsString = ""
             if (envVars != null && projectVariables != null) {
                 for (qubeshipVariable in projectVariables) {
                     if (qubeshipVariable.value.getFirst().getType() in String) {
@@ -124,6 +124,7 @@ node {
                         String envToBeExported = qubeshipVariable.value.getFirst().getValue()
                         if (envToBeExported) {
                             envVars.put(envKey, envToBeExported)
+                            envVarsString += String.format("-e %s=%s ", envKey,envToBeExported)
                         }
                     }
                 }
@@ -132,7 +133,7 @@ node {
 
         // TODO: find the way to get gcr credentials
         docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
-            process(opinionList, toolchain, qubeConfig, qubeClient)
+            process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString)
         }
 
         stage('Publish Artifacts') {
@@ -157,7 +158,7 @@ node {
     }
 }
 
-def process(opinionList, toolchain, qubeConfig, qubeClient) {
+def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString) {
     // def toolchain_prefix = "gcr.io/qubeship-partners/"
     def toolchain_prefix = "qubeship/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
@@ -166,7 +167,7 @@ def process(opinionList, toolchain, qubeConfig, qubeClient) {
     def builderImage = docker.image(
         prepareDockerFileForBuild(toolchain_img, projectName, workdir))
 
-    builderImage.withRun("", "tail -f /dev/null") { container ->
+    builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
         for (int i = 0; i < opinionList.length; i++) {
             def item = opinionList[i];
             stage(item.name) {
