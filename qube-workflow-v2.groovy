@@ -20,10 +20,10 @@ artifactsImageId = ''
 pipelineMetricsPayload = [
     "entity_id": project_id,
     "entity_type": "pipeline",
-    "company": "",
+    "company": "${env.COMPANY}",
     "tenant_id": tnt_guid,
     "org_id": org_guid,
-    "user_id": "",
+    "is_system_user": "",
     "event_id": "",
     "event_type": "",
     "event_timestamp": ""
@@ -47,8 +47,6 @@ node {
     println("qubeshipUrl is " + qubeshipUrl)
     
     try {
-        pushPipelineEventMetrics('start')
-
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
             stage("init") {
                 // load project
@@ -60,6 +58,10 @@ node {
 
                 // load owner info
                 def owner = qubeApi(httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false, qubeClient: qubeClient)
+
+                // signal: build start
+                pipelineMetricsPayload['is_system_user'] = owner.is_system_user
+                pushPipelineEventMetrics('start')
 
                 // checkout
                 String owner_credentials_id = "qubeship:usercredentials:" + owner.credential
@@ -176,6 +178,7 @@ node {
             }
         }
     } finally {
+        // signal: build end
         pushPipelineEventMetrics('end')
     }
 }
