@@ -15,7 +15,7 @@ qubeYamlString = ''
 
 artifactsImageId = ''
 
-pipelineMetricsPayload = {
+pipelineMetricsPayload = [
     "entity_id": project_id,
     "entity_type": "pipeline",
     "company": "",
@@ -25,7 +25,7 @@ pipelineMetricsPayload = {
     "event_id": randomUUID() as String,
     "event_type": "",
     "event_timestamp": ""
-}
+]
 
 node {
     String commithash = "${commithash}"
