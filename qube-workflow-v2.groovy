@@ -20,7 +20,7 @@ artifactsImageId = ''
 pipelineMetricsPayload = [
     "entity_id": project_id,
     "entity_type": "pipeline",
-    "company": "${env.COMPANY}",
+    "company": "${env['COMPANY']}",
     "tenant_id": tnt_guid,
     "org_id": org_guid,
     "is_system_user": "",
@@ -43,7 +43,7 @@ node {
 
     def opinionList = []
 
-    String qubeshipUrl = "${env.QUBE_SERVER}"
+    String qubeshipUrl = "${env['QUBE_SERVER']}"
     println("qubeshipUrl is " + qubeshipUrl)
     
     try {
