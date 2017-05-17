@@ -5,6 +5,8 @@ import org.yaml.snakeyaml.Yaml
 
 import static java.util.UUID.randomUUID
 
+import groovy.json.JsonOutput
+
 String tnt_guid = "${qube_tenant_id}"
 String org_guid = "${qube_org_id}"
 String project_id = "${qube_project_id}"
@@ -22,7 +24,7 @@ pipelineMetricsPayload = [
     "tenant_id": tnt_guid,
     "org_id": org_guid,
     "user_id": "",
-    "event_id": randomUUID() as String,
+    "event_id": "",
     "event_type": "",
     "event_timestamp": ""
 ]
@@ -359,10 +361,12 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
 }
 
 def pushPipelineEventMetrics(event_type) {
+    pipelineMetricsPayload['event_id'] = randomUUID() as String
     pipelineMetricsPayload['event_timestamp'] = new Date()
     pipelineMetricsPayload['event_type'] = event_type
+    def payloadJson = JsonOutput.toJson(pipelineMetricsPayload)
     sh (script: "curl -s -o /dev/null -X PUT https://qubeship-analytics.firebaseio.com/${pipelineMetricsPayload['event_id']}.json "
         + "-H 'cache-control: no-cache' "
         + "-H 'content-type: application/json' "
-        + "-d '${pipelineMetricsPayload}'")
+        + "-d '${payloadJson}'")
 }
