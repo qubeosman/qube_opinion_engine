@@ -20,7 +20,7 @@ artifactsImageId = ''
 pipelineMetricsPayload = [
     "entity_id": project_id,
     "entity_type": "pipeline",
-    "company": "${env['COMPANY']}",
+    "company": "",
     "tenant_id": tnt_guid,
     "org_id": org_guid,
     "is_system_user": "",
@@ -43,7 +43,7 @@ node {
 
     def opinionList = []
 
-    String qubeshipUrl = "${env['QUBE_SERVER']}"
+    String qubeshipUrl = "${env.QUBE_SERVER}"
     println("qubeshipUrl is " + qubeshipUrl)
     
     try {
@@ -60,6 +60,7 @@ node {
                 def owner = qubeApi(httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false, qubeClient: qubeClient)
 
                 // signal: build start
+                pipelineMetricsPayload['company'] = "${env.COMPANY}"
                 pipelineMetricsPayload['is_system_user'] = owner.is_system_user
                 pushPipelineEventMetrics('start')
 
