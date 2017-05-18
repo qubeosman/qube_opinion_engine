@@ -27,6 +27,7 @@ pipelineMetricsPayload = [
     "event_id": "",
     "event_type": "",
     "event_timestamp": ""
+    "install_type": ""
 ]
 
 node {
@@ -61,6 +62,7 @@ node {
 
                 // signal: build start
                 pipelineMetricsPayload['company'] = "${env.COMPANY}"
+                pipelineMetricsPayload['install_type'] = "${env.INSTALL_TYPE}"
                 pipelineMetricsPayload['is_system_user'] = owner.is_system_user
                 pushPipelineEventMetrics('start')
 
