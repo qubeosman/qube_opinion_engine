@@ -366,7 +366,8 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
 
 def pushPipelineEventMetrics(event_type) {
     pipelineMetricsPayload['event_id'] = randomUUID() as String
-    pipelineMetricsPayload['event_timestamp'] = new Date()
+    pipelineMetricsPayload['event_timestamp'] = new Date().format('yyyy-MM-dd HH:mm:ss')
+
     pipelineMetricsPayload['event_type'] = event_type
     def payloadJson = JsonOutput.toJson(pipelineMetricsPayload)
     sh (script: "curl -s -o /dev/null -X PUT https://qubeship-analytics.firebaseio.com/${pipelineMetricsPayload['event_id']}.json "
