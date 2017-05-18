@@ -46,6 +46,8 @@ node {
 
     String qubeshipUrl = "${env.QUBE_SERVER}"
     println("qubeshipUrl is " + qubeshipUrl)
+
+    String analyticsEndpoint = "${env.ANALYTICS_ENDPOINT}"
     
     try {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
@@ -64,7 +66,7 @@ node {
                 pipelineMetricsPayload['company'] = "${env.COMPANY}"
                 pipelineMetricsPayload['install_type'] = "${env.INSTALL_TYPE}"
                 pipelineMetricsPayload['is_system_user'] = owner.is_system_user
-                pushPipelineEventMetrics('start')
+                pushPipelineEventMetrics(analyticsEndpoint, 'start', new Date())
 
                 // checkout
                 String owner_credentials_id = "qubeship:usercredentials:" + owner.credential
@@ -182,7 +184,7 @@ node {
         }
     } finally {
         // signal: build end
-        pushPipelineEventMetrics('end')
+        pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
     }
 }
 
@@ -346,17 +348,6 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
     echo ENV QUBE_BUILD_VERSION=${imageVersion} >> ${dockerFile} && \
     echo ADD . ${workdir} >> ${dockerFile}")
 
-    // for (qubeshipVariable in projectVariables) {
-    //     if (qubeshipVariable.value.getFirst().getType() in String) {
-    //         String envKey = qubeshipVariable.key
-    //         String envToBeExported = qubeshipVariable.value.getFirst().getValue()
-    //         if (envToBeExported) {
-    //             echo "echo ENV ${envKey} ${envToBeExported}"
-    //             sh(script: "echo ENV ${envKey} ${envToBeExported} >> ${dockerFile}")
-    //         }
-    //     }
-    // }
-
     sh(script: 'cat ' + dockerFile)
 
     String buiderImageTag = project_name + "-build"
@@ -366,14 +357,15 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
     return buiderImageTag
 }
 
-def pushPipelineEventMetrics(event_type) {
-    pipelineMetricsPayload['event_id'] = randomUUID() as String
-    pipelineMetricsPayload['event_timestamp'] = new Date().format('yyyy-MM-dd HH:mm:ss')
-
-    pipelineMetricsPayload['event_type'] = event_type
-    def payloadJson = JsonOutput.toJson(pipelineMetricsPayload)
-    sh (script: "curl -s -o /dev/null -X PUT https://qubeship-analytics.firebaseio.com/${pipelineMetricsPayload['event_id']}.json "
-        + "-H 'cache-control: no-cache' "
-        + "-H 'content-type: application/json' "
-        + "-d '${payloadJson}'")
+def pushPipelineEventMetrics(analyticsEndpoint, eventType, Date timestamp) {
+    if (analyticsEndpoint?.trim()) {
+        pipelineMetricsPayload['event_id'] = randomUUID() as String
+        pipelineMetricsPayload['event_timestamp'] = timestamp.format('yyyy-MM-dd HH:mm:ss')
+        pipelineMetricsPayload['event_type'] = event_type
+        def payloadJson = JsonOutput.toJson(pipelineMetricsPayload)
+        sh (script: "curl -s -o /dev/null -X PUT ${analyticsEndpoint}/${pipelineMetricsPayload['event_id']}.json "
+            + "-H 'cache-control: no-cache' "
+            + "-H 'content-type: application/json' "
+            + "-d '${payloadJson}'")
+    }
 }
