@@ -26,7 +26,7 @@ pipelineMetricsPayload = [
     "is_system_user": "",
     "event_id": "",
     "event_type": "",
-    "event_timestamp": ""
+    "event_timestamp": "",
     "install_type": ""
 ]
 
