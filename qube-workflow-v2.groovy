@@ -359,9 +359,10 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
 
 def pushPipelineEventMetrics(analyticsEndpoint, eventType, Date timestamp) {
     if (analyticsEndpoint?.trim()) {
+        analyticsEndpoint = analyticsEndpoint[-1] == "/" ? analyticsEndpoint.substring(0, analyticsEndpoint.length() - 1) : analyticsEndpoint
         pipelineMetricsPayload['event_id'] = randomUUID() as String
         pipelineMetricsPayload['event_timestamp'] = timestamp.format('yyyy-MM-dd HH:mm:ss')
-        pipelineMetricsPayload['event_type'] = event_type
+        pipelineMetricsPayload['event_type'] = eventType
         def payloadJson = JsonOutput.toJson(pipelineMetricsPayload)
         sh (script: "curl -s -o /dev/null -X PUT ${analyticsEndpoint}/${pipelineMetricsPayload['event_id']}.json "
             + "-H 'cache-control: no-cache' "
