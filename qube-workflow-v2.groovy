@@ -3,6 +3,10 @@ import com.ca.io.qubeship.client.model.opinions.Opinion
 import com.ca.io.qubeship.utils.GramlClient
 import org.yaml.snakeyaml.Yaml
 
+import static java.util.UUID.randomUUID
+
+import groovy.json.JsonOutput
+
 String tnt_guid = "${qube_tenant_id}"
 String org_guid = "${qube_org_id}"
 String project_id = "${qube_project_id}"
@@ -12,6 +16,19 @@ envVars = null
 qubeYamlString = ''
 
 artifactsImageId = ''
+
+pipelineMetricsPayload = [
+    "entity_id": project_id,
+    "entity_type": "pipeline",
+    "company": "",
+    "tenant_id": tnt_guid,
+    "org_id": org_guid,
+    "is_system_user": "",
+    "event_id": "",
+    "event_type": "",
+    "event_timestamp": "",
+    "install_type": ""
+]
 
 node {
     String commithash = "${commithash}"
@@ -29,132 +46,145 @@ node {
 
     String qubeshipUrl = "${env.QUBE_SERVER}"
     println("qubeshipUrl is " + qubeshipUrl)
+
+    String analyticsEndpoint = "${env.ANALYTICS_ENDPOINT}"
     
-    qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
-        stage("init") {
-            // load project
-            project = qubeApi(httpMethod: "GET", resource: "projects", id: "${project_id}", qubeClient: qubeClient)
-            if (commithash?.trim().length() == 0) {
-                echo "replacing empty commit hash with refspec " + project.scm.refspec
-                commithash = project.scm.refspec
-            }
-
-            // load owner info
-            def owner = qubeApi(httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false, qubeClient: qubeClient)
-
-            // checkout
-            String owner_credentials_id = "qubeship:usercredentials:" + owner.credential
-            checkout poll: false, scm: [$class: 'GitSCM',
-                branches: [[name: "${commithash}"]],
-                userRemoteConfigs: [[
-                    credentialsId: owner_credentials_id,
-                    url: project.scm.repoUrl,
-                    refspec: project.scm.refspec
-                ]]
-            ]
-            // sh (script: "rm -Rf qube_utils")
-            sh (script: "if [ ! -d qube_utils ]; then git clone https://github.com/Qubeship/qube_utils qube_utils; else cd qube_utils; git pull; cd -; fi",
-                label:"Fetching qubeship scripts and templates")
-            
-            // get the contents of qube.yaml not from the API but the file in the source repo
-            // String b64_encoded_qube_yaml = project.qubeYaml
-            // byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
-            // String qube_yaml = new String(b64_decoded)
-            // qubeConfig = getYaml(qube_yaml)
-            def qubeYamlFile = env.WORKSPACE + '/qube.yaml'
-            qubeYamlString = sh(returnStdout: true, script: "if [ -e $qubeYamlFile ]; then cat $qubeYamlFile; fi")
-            qubeConfig = getYaml(qubeYamlString)
-            initValidateQubeConfig(qubeConfig)
-
-            // load toolchain
-            toolchain = qubeApi(httpMethod: "GET", resource: "toolchains", id: project.toolchainId, qubeClient: qubeClient)
-            // find the URL and credentials of the registry where the toolchain image is
-            def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
-            if (toolchainRegistry) {
-                toolchainRegistryUrl = toolchainRegistry.endPoint
-                toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
-            }
-            else {
-                toolchainRegistryUrl = 'https://index.docker.io/'
-                toolchainRegistryCredentialsPath = null
-                // toolchainRegistryUrl = 'https://gcr.io/'
-                // toolchainRegistryCredentialsPath = 'gcr:qubeship-partners'
-            }
-
-            // TODO: opinion file name may be different
-            String opinionYamlFilePath = env.WORKSPACE + '/opinion.yaml'
-            String opinionYamlString = sh(returnStdout: true, script: "if [ -e $opinionYamlFilePath ]; then cat $opinionYamlFilePath; fi")
-            if (opinionYamlString?.trim()) {
-                GramlClient gramlClient = new GramlClient(opinionYamlString)
-                opinionList = getArray(gramlClient.getStages(gramlClient.getStart("build")))
-            }
-            else {
-                // opinion
-                opinion = qubeApi(httpMethod: "GET", resource: "opinions", id: project.opinionId, qubeClient: qubeClient)
-                String b64_encoded_opinion_yaml = opinion.yaml
-                sh (returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml")
-                opinionList = getArray(opinion.opinionItems)
-            }
-            
-            sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
-            variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
-            Object[] vars = getArray(variableConfig.variables)
-            for( int i = 0; i<vars?.length; i++){ 
-                def var = vars[i];
-                String varName = var.name
-                boolean optional = var.optional
-                String value = var.value
-                println(varName + ', ' + optional)
-                if (!optional && !value) {
-                    error (String.format("Required variable(s) %s missing!", varName))
+    try {
+        qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
+            stage("init") {
+                // load project
+                project = qubeApi(httpMethod: "GET", resource: "projects", id: "${project_id}", qubeClient: qubeClient)
+                if (commithash?.trim().length() == 0) {
+                    echo "replacing empty commit hash with refspec " + project.scm.refspec
+                    commithash = project.scm.refspec
                 }
-                if (value?.trim()) {
-                    projectVariables.put(varName, value)
-                }
-            }
 
-            // resolve all qubeship args in projectVariables
-            projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
-            envVars = qubeship.getEnvVars()
-            envVarsString = ""
-            if (envVars != null && projectVariables != null) {
-                for (qubeshipVariable in projectVariables) {
-                    if (qubeshipVariable.value.getFirst().getType() in String) {
-                        String envKey = qubeshipVariable.key
-                        String envToBeExported = qubeshipVariable.value.getFirst().getValue()
-                        if (envToBeExported) {
-                            envVars.put(envKey, envToBeExported)
-                            envVarsString += String.format("-e %s=%s ", envKey,envToBeExported)
+                // load owner info
+                def owner = qubeApi(httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false, qubeClient: qubeClient)
+
+                // signal: build start
+                pipelineMetricsPayload['company'] = "${env.COMPANY}"
+                pipelineMetricsPayload['install_type'] = "${env.INSTALL_TYPE}"
+                pipelineMetricsPayload['is_system_user'] = owner.is_system_user
+                pushPipelineEventMetrics(analyticsEndpoint, 'start', new Date())
+
+                // checkout
+                String owner_credentials_id = "qubeship:usercredentials:" + owner.credential
+                checkout poll: false, scm: [$class: 'GitSCM',
+                    branches: [[name: "${commithash}"]],
+                    userRemoteConfigs: [[
+                        credentialsId: owner_credentials_id,
+                        url: project.scm.repoUrl,
+                        refspec: project.scm.refspec
+                    ]]
+                ]
+                // sh (script: "rm -Rf qube_utils")
+                sh (script: "if [ ! -d qube_utils ]; then git clone https://github.com/Qubeship/qube_utils qube_utils; else cd qube_utils; git pull; cd -; fi",
+                    label:"Fetching qubeship scripts and templates")
+                
+                // get the contents of qube.yaml not from the API but the file in the source repo
+                // String b64_encoded_qube_yaml = project.qubeYaml
+                // byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
+                // String qube_yaml = new String(b64_decoded)
+                // qubeConfig = getYaml(qube_yaml)
+                def qubeYamlFile = env.WORKSPACE + '/qube.yaml'
+                qubeYamlString = sh(returnStdout: true, script: "if [ -e $qubeYamlFile ]; then cat $qubeYamlFile; fi")
+                qubeConfig = getYaml(qubeYamlString)
+                initValidateQubeConfig(qubeConfig)
+
+                // load toolchain
+                toolchain = qubeApi(httpMethod: "GET", resource: "toolchains", id: project.toolchainId, qubeClient: qubeClient)
+                // find the URL and credentials of the registry where the toolchain image is
+                def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
+                if (toolchainRegistry) {
+                    toolchainRegistryUrl = toolchainRegistry.endPoint
+                    toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
+                }
+                else {
+                    toolchainRegistryUrl = 'https://index.docker.io/'
+                    toolchainRegistryCredentialsPath = null
+                    // toolchainRegistryUrl = 'https://gcr.io/'
+                    // toolchainRegistryCredentialsPath = 'gcr:qubeship-partners'
+                }
+
+                // TODO: opinion file name may be different
+                String opinionYamlFilePath = env.WORKSPACE + '/opinion.yaml'
+                String opinionYamlString = sh(returnStdout: true, script: "if [ -e $opinionYamlFilePath ]; then cat $opinionYamlFilePath; fi")
+                if (opinionYamlString?.trim()) {
+                    GramlClient gramlClient = new GramlClient(opinionYamlString)
+                    opinionList = getArray(gramlClient.getStages(gramlClient.getStart("build")))
+                }
+                else {
+                    // opinion
+                    opinion = qubeApi(httpMethod: "GET", resource: "opinions", id: project.opinionId, qubeClient: qubeClient)
+                    String b64_encoded_opinion_yaml = opinion.yaml
+                    sh (returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml")
+                    opinionList = getArray(opinion.opinionItems)
+                }
+                
+                sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
+                variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
+                Object[] vars = getArray(variableConfig.variables)
+                for( int i = 0; i<vars?.length; i++){ 
+                    def var = vars[i];
+                    String varName = var.name
+                    boolean optional = var.optional
+                    String value = var.value
+                    println(varName + ', ' + optional)
+                    if (!optional && !value) {
+                        error (String.format("Required variable(s) %s missing!", varName))
+                    }
+                    if (value?.trim()) {
+                        projectVariables.put(varName, value)
+                    }
+                }
+
+                // resolve all qubeship args in projectVariables
+                projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
+                envVars = qubeship.getEnvVars()
+                envVarsString = ""
+                if (envVars != null && projectVariables != null) {
+                    for (qubeshipVariable in projectVariables) {
+                        if (qubeshipVariable.value.getFirst().getType() in String) {
+                            String envKey = qubeshipVariable.key
+                            String envToBeExported = qubeshipVariable.value.getFirst().getValue()
+                            if (envToBeExported) {
+                                envVars.put(envKey, envToBeExported)
+                                envVarsString += String.format("-e %s=%s ", envKey,envToBeExported)
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // TODO: find the way to get gcr credentials
-        docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
-            process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString)
-        }
+            // TODO: find the way to get gcr credentials
+            docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
+                process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString)
+            }
 
-        stage('Publish Artifacts') {
-            def payloadImageId = """{
-                \"type\": \"image\",
-                \"contentType\": \"text/plain\",
-                \"title\": \"${artifactsImageId}\",
-                \"url\": \"${artifactsImageId}\",
-                \"isResource\": false
-            }"""
-            def payloadLogURL = """{
-                \"type\": \"log\",
-                \"contentType\": \"text/plain\",
-                \"title\": \"Full Log\",
-                \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
-                \"isResource\": true
-            }"""
-            String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
-            qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
-            qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+            stage('Publish Artifacts') {
+                def payloadImageId = """{
+                    \"type\": \"image\",
+                    \"contentType\": \"text/plain\",
+                    \"title\": \"${artifactsImageId}\",
+                    \"url\": \"${artifactsImageId}\",
+                    \"isResource\": false
+                }"""
+                def payloadLogURL = """{
+                    \"type\": \"log\",
+                    \"contentType\": \"text/plain\",
+                    \"title\": \"Full Log\",
+                    \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                    \"isResource\": true
+                }"""
+                String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
+                qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+            }
         }
+    } finally {
+        // signal: build end
+        pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
     }
 }
 
@@ -318,17 +348,6 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
     echo ENV QUBE_BUILD_VERSION=${imageVersion} >> ${dockerFile} && \
     echo ADD . ${workdir} >> ${dockerFile}")
 
-    // for (qubeshipVariable in projectVariables) {
-    //     if (qubeshipVariable.value.getFirst().getType() in String) {
-    //         String envKey = qubeshipVariable.key
-    //         String envToBeExported = qubeshipVariable.value.getFirst().getValue()
-    //         if (envToBeExported) {
-    //             echo "echo ENV ${envKey} ${envToBeExported}"
-    //             sh(script: "echo ENV ${envKey} ${envToBeExported} >> ${dockerFile}")
-    //         }
-    //     }
-    // }
-
     sh(script: 'cat ' + dockerFile)
 
     String buiderImageTag = project_name + "-build"
@@ -336,4 +355,18 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
     sh(script: "docker build -t ${buiderImageTag} -f ${dockerFile} .")
 
     return buiderImageTag
+}
+
+def pushPipelineEventMetrics(analyticsEndpoint, eventType, Date timestamp) {
+    if (analyticsEndpoint?.trim()) {
+        analyticsEndpoint = analyticsEndpoint[-1] == "/" ? analyticsEndpoint.substring(0, analyticsEndpoint.length() - 1) : analyticsEndpoint
+        pipelineMetricsPayload['event_id'] = randomUUID() as String
+        pipelineMetricsPayload['event_timestamp'] = timestamp.format('yyyy-MM-dd HH:mm:ss')
+        pipelineMetricsPayload['event_type'] = eventType
+        def payloadJson = JsonOutput.toJson(pipelineMetricsPayload)
+        sh (script: "curl -s -o /dev/null -X PUT ${analyticsEndpoint}/${pipelineMetricsPayload['event_id']}.json "
+            + "-H 'cache-control: no-cache' "
+            + "-H 'content-type: application/json' "
+            + "-d '${payloadJson}'")
+    }
 }
