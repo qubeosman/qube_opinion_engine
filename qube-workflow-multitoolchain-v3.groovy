@@ -45,6 +45,7 @@ node {
 
     String toolchainRegistryUrl = ""
     String toolchainRegistryCredentialsPath = ""
+    String toolchainPrefix = ""
 
     def opinionList = []
 
@@ -105,7 +106,6 @@ node {
                 }
                 // find the URL and credentials of the registry where the toolchain image is
                 def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
-                def toolchainPrefix = ""
                 if (toolchainRegistry) {
                     toolchainRegistryUrl = toolchainRegistry.endPoint
                     toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
