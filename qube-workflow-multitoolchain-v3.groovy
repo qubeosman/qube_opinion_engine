@@ -250,7 +250,7 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
     }
     if(stageObj.getProperties().containsKey("next")) {
         def nextItems = (LinkedList<Stage>)stageObj.getProperties().get("next");
-        for(Stage stage: nextItems) {
+        for(Stage stage: getArray(nextItems)) {
            runStage(stage, toolchain, qubeConfig, qubeClient, container, workdir) 
         }
     }
