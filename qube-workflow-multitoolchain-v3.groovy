@@ -45,7 +45,7 @@ node {
 
     String toolchainRegistryUrl = ""
     String toolchainRegistryCredentialsPath = ""
-    String toolchainPrefix = ""
+    String toolchainPrefix = null
 
     def opinionList = []
 
@@ -108,17 +108,16 @@ node {
                 def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
                 if (toolchainRegistry) {
                     toolchainRegistryUrl = toolchainRegistry.endPoint
-                    toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
+                    if(toolchainRegistry.credentialPath) {
+                        toolchainRegistryCredentialsPath = "qubeship:" + toolchainRegistry.category + ":" + toolchainRegistry.credentialPath
+                    }
                     if (toolchainRegistry.additionalInfo) {
                         toolchainPrefix= toolchainRegistry.additionalInfo['account']
                     }
                 }
                 else {
                     toolchainRegistryUrl = 'https://index.docker.io/'
-                    toolchainRegistryCredentialsPath = null
                     toolchainPrefix= "qubeship"
-                    // toolchainRegistryUrl = 'https://gcr.io/'
-                    // toolchainRegistryCredentialsPath = 'gcr:qubeship-partners'
                 }
 
                 // TODO: opinion file name may be different
