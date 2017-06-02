@@ -40,7 +40,7 @@ node {
     // def endpointsMap = [:]
 
     String toolchainRegistryUrl = ""
-    String toolchainRegistryCredentialsPath = ""
+    String toolchainRegistryCredentialsPath = null
     String toolchainPrefix = ""
 
     def opinionList = []
@@ -97,16 +97,19 @@ node {
                 toolchain = qubeApi(httpMethod: "GET", resource: "toolchains", id: project.toolchainId, qubeClient: qubeClient)
                 // find the URL and credentials of the registry where the toolchain image is
                 def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
+                
+
                 if (toolchainRegistry) {
                     toolchainRegistryUrl = toolchainRegistry.endPoint
-                    toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
+                    if(toolchainRegistry.credentialPath) {
+                        toolchainRegistryCredentialsPath = "qubeship:" + toolchainRegistry.category + ":" + toolchainRegistry.credentialPath
+                    }
                     if (toolchainRegistry.additionalInfo) {
                         toolchainPrefix= toolchainRegistry.additionalInfo['account']
                     }
                 }
                 else {
                     toolchainRegistryUrl = 'https://index.docker.io/'
-                    toolchainRegistryCredentialsPath = null
                     toolchainPrefix= "qubeship"
                 }
 
