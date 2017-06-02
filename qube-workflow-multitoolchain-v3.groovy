@@ -134,6 +134,7 @@ node {
                     sh (returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml")
                     opinionList = getArray(opinion.opinionItems)
                 }
+                println(opinionList)
                 
                 sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
                 variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
