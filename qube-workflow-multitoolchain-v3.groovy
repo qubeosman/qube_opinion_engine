@@ -233,7 +233,6 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolch
 }
 
 def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
-    println(stageObj)
     stage(stageObj.name) {
         // skip if the stage is skippable or throw error
         if ('skip' in qubeConfig[stageObj.name] && qubeConfig[stageObj.name]['skip']) {
