@@ -134,7 +134,6 @@ node {
                     sh (returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml")
                     opinionList = getArray(opinion.opinionItems)
                 }
-                println(opinionList)
                 
                 sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
                 variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
@@ -234,6 +233,7 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolch
 }
 
 def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
+    println(stageObj)
     stage(stageObj.name) {
         // skip if the stage is skippable or throw error
         if ('skip' in qubeConfig[stageObj.name] && qubeConfig[stageObj.name]['skip']) {
@@ -254,6 +254,8 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
         for( int i = 0; i<stages?.length; i++){ 
            runStage(stages[i], toolchain, qubeConfig, qubeClient, container, workdir) 
         }
+    }else{
+        println("stage : " + stageObj.name + " : complete")
     }
 
 }
