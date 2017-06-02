@@ -40,7 +40,8 @@ node {
     // def endpointsMap = [:]
 
     String toolchainRegistryUrl = ""
-    String toolchainRegistryCredentialsPath = ""
+    String toolchainRegistryCredentialsPath = null
+    String toolchainPrefix = ""
 
     def opinionList = []
 
@@ -48,7 +49,7 @@ node {
     println("qubeshipUrl is " + qubeshipUrl)
 
     String analyticsEndpoint = "${env.ANALYTICS_ENDPOINT}"
-    
+
     try {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
             stage("init") {
@@ -81,7 +82,7 @@ node {
                 // sh (script: "rm -Rf qube_utils")
                 sh (script: "if [ ! -d qube_utils ]; then git clone https://github.com/Qubeship/qube_utils qube_utils; else cd qube_utils; git pull; cd -; fi",
                     label:"Fetching qubeship scripts and templates")
-                
+
                 // get the contents of qube.yaml not from the API but the file in the source repo
                 // String b64_encoded_qube_yaml = project.qubeYaml
                 // byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
@@ -96,15 +97,20 @@ node {
                 toolchain = qubeApi(httpMethod: "GET", resource: "toolchains", id: project.toolchainId, qubeClient: qubeClient)
                 // find the URL and credentials of the registry where the toolchain image is
                 def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
+
+
                 if (toolchainRegistry) {
                     toolchainRegistryUrl = toolchainRegistry.endPoint
-                    toolchainRegistryCredentialsPath = toolchainRegistry.credentialPath
+                    if(toolchainRegistry.credentialPath) {
+                        toolchainRegistryCredentialsPath = "qubeship:" + toolchainRegistry.category + ":" + toolchainRegistry.credentialPath
+                    }
+                    if (toolchainRegistry.additionalInfo) {
+                        toolchainPrefix= toolchainRegistry.additionalInfo['account']
+                    }
                 }
                 else {
                     toolchainRegistryUrl = 'https://index.docker.io/'
-                    toolchainRegistryCredentialsPath = null
-                    // toolchainRegistryUrl = 'https://gcr.io/'
-                    // toolchainRegistryCredentialsPath = 'gcr:qubeship-partners'
+                    toolchainPrefix= "qubeship"
                 }
 
                 // TODO: opinion file name may be different
@@ -121,11 +127,11 @@ node {
                     sh (returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml")
                     opinionList = getArray(opinion.opinionItems)
                 }
-                
+
                 sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
                 variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
                 Object[] vars = getArray(variableConfig.variables)
-                for( int i = 0; i<vars?.length; i++){ 
+                for( int i = 0; i<vars?.length; i++){
                     def var = vars[i];
                     String varName = var.name
                     boolean optional = var.optional
@@ -159,7 +165,7 @@ node {
 
             // TODO: find the way to get gcr credentials
             docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
-                process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString)
+                process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix)
             }
 
             stage('Publish Artifacts') {
@@ -188,9 +194,8 @@ node {
     }
 }
 
-def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString) {
-    // def toolchain_prefix = "gcr.io/qubeship-partners/"
-    def toolchain_prefix = "qubeship/"
+def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix) {
+    def toolchain_prefix = (toolchainPrefix?:"qubeship") + "/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     String projectName = qubeConfig['name']
     String workdir = "/home/app"
@@ -227,7 +232,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
     if (task.parent.name in qubeConfig && task.name in qubeConfig[task.parent.name]) {
         taskDefInProject = qubeConfig[task.parent.name][task.name]
     }
-    
+
     // skip if the task is skippable or throw error
     if (taskDefInProject?.skip) {
         if (!task.properties.skippable) {
@@ -269,7 +274,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             for (arg in taskDefInProject?.args) {
                 count++
                 args.put(count, arg)
-            }   
+            }
         } else if (task.properties) {
             def taskDefaultArgs = task.properties.get("args")
             for (arg in taskDefaultArgs) {
