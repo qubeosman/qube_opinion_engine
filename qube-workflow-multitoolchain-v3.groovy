@@ -236,8 +236,10 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolch
         def folder = new File( '/opt/fortify' )
         // If it doesn't exist
         if( !folder.exists() ) {
+            println("folder " + folder + " doesnt exist")
             runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
         } else{
+            println("folder " + folder + " exist")
             wrap([$class: 'ConfigFileBuildWrapper', 
                     managedFiles: [
                         [fileId: 'fortify.license', 
