@@ -359,9 +359,19 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
         if (taskDefInProject?.publish && executeInToolchain) {
             for (artifact in taskDefInProject.publish) {
                 try {
-                def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
-                println(copyStatement)
-                sh(script: copyStatement, label:"Transfering artifacts from container")
+                    def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
+                    println(copyStatement)
+                    sh(script: copyStatement, label:"Transfering artifacts from container")
+                    if (artifact.endsWith(".html")) {
+                      publishHTML (target: [
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: false,
+                        keepAll: true,
+                        reportDir: ".",
+                        reportFiles: artifact,
+                        reportName: "Report " + artifact.replaceAll("/","")
+                      ])
+                   }    
                 }catch(Exception ex) {
                     ex.printStackTrace()
                 }
