@@ -228,19 +228,25 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolch
     String projectName = qubeConfig['name']
     String workdir = "/home/app"
 
-    wrap([$class: 'ConfigFileBuildWrapper', 
-            managedFiles: [
-                [fileId: 'fortify.license', 
-                targetLocation: "./fortify.license"]]]) {
-        def builderImage = docker.image(
-            prepareDockerFileForBuild(toolchain_img, projectName, workdir))
+ 
+    def builderImage = docker.image(
+        prepareDockerFileForBuild(toolchain_img, projectName, workdir))
 
-        builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
-
+    builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
+        def folder = new File( '/opt/fortify' )
+        // If it doesn't exist
+        if( !folder.exists() ) {
             runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
-          
+        } else{
+            wrap([$class: 'ConfigFileBuildWrapper', 
+                    managedFiles: [
+                        [fileId: 'fortify.license', 
+                        targetLocation: "/opt/fortify/fortify.license"]]]) {
+                runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
+            }
         }
     }
+    
 }
 
 def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
