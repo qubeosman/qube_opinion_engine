@@ -119,6 +119,9 @@ node {
                     toolchainRegistryUrl = 'https://index.docker.io/'
                     toolchainPrefix= "qubeship"
                 }
+                println("toolchain prefix:" + toolchainPrefix)
+                println("toolchain credential:" + toolchainRegistryCredentialsPath)
+                println("toolchain toolchainRegistryUrl:" + toolchainRegistryUrl)
 
                 // TODO: opinion file name may be different
                 String opinionYamlFilePath = env.WORKSPACE + '/opinion.yaml'
@@ -224,11 +227,19 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolch
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     String projectName = qubeConfig['name']
     String workdir = "/home/app"
-    def builderImage = docker.image(
-        prepareDockerFileForBuild(toolchain_img, projectName, workdir))
 
-    builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
-        runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
+    wrap([$class: 'ConfigFileBuildWrapper', 
+            managedFiles: [
+                [fileId: 'fortify.license', 
+                targetLocation: "./fortify.license"]]]) {
+        def builderImage = docker.image(
+            prepareDockerFileForBuild(toolchain_img, projectName, workdir))
+
+        builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
+
+            runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
+          
+        }
     }
 }
 
@@ -392,7 +403,7 @@ def initValidateQubeConfig(qubeConfig) {
 def prepareDockerFileForBuild(image, project_name, workdir) {
     String dockerFile = "Dockerfile-build"
     String imageVersion = "${env.BUILD_NUMBER}"
-
+    
     sh(script: "echo FROM ${image} > ${dockerFile} && \
     echo RUN mkdir -p ${workdir} >> ${dockerFile} && \
     echo WORKDIR ${workdir} >> ${dockerFile} && \
@@ -403,6 +414,7 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
 
     String buiderImageTag = project_name + "-build"
     buiderImageTag = buiderImageTag.replaceAll("\\s+|_+", "-").toLowerCase()
+    docker.image(image).pull()
     sh(script: "docker build -t ${buiderImageTag} -f ${dockerFile} .")
 
     return buiderImageTag
