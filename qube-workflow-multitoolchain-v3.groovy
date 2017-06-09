@@ -235,7 +235,7 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolch
     builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
         def folder = new File( '/opt/fortify' )
         // If it doesn't exist
-        if( !folder.exists() ) {
+        if( false) {
             println("folder " + folder + " doesnt exist")
             runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
         } else{
