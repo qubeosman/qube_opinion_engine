@@ -53,7 +53,18 @@ node {
     println("qubeshipUrl is " + qubeshipUrl)
 
     String analyticsEndpoint = "${env.ANALYTICS_ENDPOINT}"
-    
+    String run_id = randomUUID() as String
+    boolean supportFortify=false
+    wrap([$class: 'ConfigFileBuildWrapper', 
+        managedFiles: [
+            [fileId: 'fortify.license', 
+            targetLocation: "/tmp/${run_id}/fortify.license"]]]) {
+        //def builderImage = docker.image(
+        //    prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir))
+        sh (script:"docker create  -v /meta --name meta-${run_id} busybox")
+        sh (script:"docker cp /tmp/${run_id}/fortify.license meta-${run_id}:/meta")
+    }
+
     try {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
             stage("init") {
@@ -141,12 +152,16 @@ node {
                 sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
                 variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
                 Object[] vars = getArray(variableConfig.variables)
+                
                 for( int i = 0; i<vars?.length; i++){ 
                     def var = vars[i];
                     String varName = var.name
                     boolean optional = var.optional
                     String value = var.value
                     println(varName + ', ' + optional)
+                    if(varName == "supportFortify") {
+                        supportFortify = (value?.toLowerCase() == "true") 
+                    }
                     if (!optional && !value) {
                         error (String.format("Required variable(s) %s missing!", varName))
                     }
@@ -171,11 +186,14 @@ node {
                         }
                     }
                 }
+                if(supportFortify) {
+                    envVarsString+=" --volumes-from meta-${run_id} --volumes-from qubeship/fortify:4.21"
+                }
             }
 
             // TODO: find the way to get gcr credentials
             docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
-                process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix)
+                process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, supportFortify)
             }
 
             stage('Publish Artifacts') {
@@ -200,7 +218,9 @@ node {
         }
     } finally {
         // signal: build end
+        sh (script:"docker rm meta-${run_id}")
         pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
+
     }
 }
 
@@ -221,34 +241,22 @@ def getProjectToolchains(project) {
 
 }
 
-def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix) {
+def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, supportFortify) {
     // def toolchain_prefix = "gcr.io/qubeship-partners/"
     def toolchain_prefix = (toolchainPrefix?:"qubeship") + "/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     String projectName = qubeConfig['name']
     String workdir = "/home/app"
-
- 
     def builderImage = docker.image(
-        prepareDockerFileForBuild(toolchain_img, projectName, workdir))
-
+        prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir))
     builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
-        def folder = new File( '/opt/fortify' )
         // If it doesn't exist
-        if( false) {
-            println("folder " + folder + " doesnt exist")
-            runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
-        } else{
-            println("folder " + folder + " exist")
-            wrap([$class: 'ConfigFileBuildWrapper', 
-                    managedFiles: [
-                        [fileId: 'fortify.license', 
-                        targetLocation: "/opt/fortify/fortify.license"]]]) {
-                runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
-            }
+        if(supportFortify) {
+            sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
         }
-    }
-    
+        runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
+    } 
+
 }
 
 def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
@@ -369,6 +377,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                 try {
                     def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
                     println(copyStatement)
+                    
                     sh(script: copyStatement, label:"Transfering artifacts from container")
                     if (artifact.endsWith(".html")) {
                       publishHTML (target: [
@@ -379,7 +388,8 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                         reportFiles: artifact,
                         reportName: "Report " + artifact.replaceAll("/","")
                       ])
-                   }    
+                   } 
+                   
                 }catch(Exception ex) {
                     ex.printStackTrace()
                 }
@@ -418,8 +428,8 @@ def initValidateQubeConfig(qubeConfig) {
   }
 }
 
-def prepareDockerFileForBuild(image, project_name, workdir) {
-    String dockerFile = "Dockerfile-build"
+def prepareDockerFileForBuild(image, id, project_name, workdir) {
+    String dockerFile = "Dockerfile-build-" + id
     String imageVersion = "${env.BUILD_NUMBER}"
     
     sh(script: "echo FROM ${image} > ${dockerFile} && \
@@ -430,7 +440,7 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
 
     sh(script: 'cat ' + dockerFile)
 
-    String buiderImageTag = project_name + "-build"
+    String buiderImageTag = project_name + "-" + id + "-build"
     buiderImageTag = buiderImageTag.replaceAll("\\s+|_+", "-").toLowerCase()
     docker.image(image).pull()
     sh(script: "docker build -t ${buiderImageTag} -f ${dockerFile} .")
