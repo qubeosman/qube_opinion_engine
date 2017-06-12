@@ -187,7 +187,8 @@ node {
                     }
                 }
                 if(supportFortify) {
-                    envVarsString+=" --volumes-from meta-${run_id} --volumes-from qubeship/fortify:4.21"
+                    sh (script:"docker create --name fortify-${run_id} qubeship/fortify:4.21")
+                    envVarsString+=" --volumes-from meta-${run_id} --volumes-from fortify-${run_id}"
                 }
             }
 
@@ -219,6 +220,9 @@ node {
     } finally {
         // signal: build end
         sh (script:"docker rm meta-${run_id}")
+        if(supportFortify) {
+            sh (script:"docker rm -f fortify-${run_id}")
+        }
         pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
 
     }
@@ -253,6 +257,7 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
         // If it doesn't exist
         if(supportFortify) {
             sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
+            sh("docker exec ${container.id} sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\"")
         }
         runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
     } 
