@@ -397,7 +397,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     }
                     println("alias :" + artifactAlias)
                     
-                    if (artifactName.endsWith(".html")) {
+                    if (baseArtifactFileName.endsWith(".html")) {
                       publishHTML (target: [
                         allowMissing: false,
                         alwaysLinkToLastBuild: false,
