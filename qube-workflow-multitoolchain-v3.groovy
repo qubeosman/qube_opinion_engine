@@ -384,14 +384,20 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     artifactParts=artifactVal.tokenize(':')
                     artifact  = artifactParts[0]
 
-                    def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
+
+                    baseArtifactFileName=sh(returnStdout: true, script:"basename ${artifact}")
+
+                    baseArtifactFileName=baseArtifactFileName?.trim()
+                    println("baseArtifactFileName:" + baseArtifactFileName)
+
+                    parentPath=sh(returnStdout: true, script:"dirname ${artifact}")
+                    parentPath=parentPath?.trim()
+                    println("parentPath :" + baseArtifactFileName)
+                    artifactAlias=baseArtifactFileName
+                    sh(script:"mkdir -p ./${parentPath}")
+                    def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ./${parentPath}"
                     println(copyStatement)
                     sh(script: copyStatement, label:"Transfering artifacts from container")
-
-                    baseArtifactFileName=sh(script:"basename ${artifact}")?.trim();
-                    parentPath=sh(script:"dirname ${artifact}")?.trim();
-                    println(parentPath + ":" + baseArtifactName)
-                    artifactAlias=baseArtifactFileName
                     //if (artifactParts.length>1) {
                     //    artifactAlias = artifactParts[1]
                     //}
