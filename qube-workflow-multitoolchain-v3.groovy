@@ -391,10 +391,10 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     baseArtifactFileName=sh(script:"basename ${artifact}")?.trim();
                     parentPath=sh(script:"dirname ${artifact}")?.trim();
                     println(parentPath + ":" + baseArtifactName)
-                    artifactAlias=artifact
-                    if (artifactParts.length>1) {
-                        artifactAlias = artifactParts[1]
-                    }
+                    artifactAlias=baseArtifactFileName
+                    //if (artifactParts.length>1) {
+                    //    artifactAlias = artifactParts[1]
+                    //}
                     println("alias :" + artifactAlias)
                     
                     if (baseArtifactFileName.endsWith(".html")) {
