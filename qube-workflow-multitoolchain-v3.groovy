@@ -187,6 +187,7 @@ node {
                     }
                 }
                 if(supportFortify) {
+                    //sh (script:"docker pull qubeship/fortify:4.21")
                     sh (script:"docker create --name fortify-${run_id} qubeship/fortify:4.21")
                     envVarsString+=" --volumes-from meta-${run_id} --volumes-from fortify-${run_id}"
                 }
@@ -378,22 +379,35 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
         }
 
         if (taskDefInProject?.publish && executeInToolchain) {
-            for (artifact in taskDefInProject.publish) {
+            for (artifactVal in taskDefInProject.publish) {
                 try {
+                    artifactParts=artifactVal.tokenize(':')
+                    artifact  = artifactParts[0]
+
                     def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
                     println(copyStatement)
-                    
                     sh(script: copyStatement, label:"Transfering artifacts from container")
-                    if (artifact.endsWith(".html")) {
+
+                    baseArtifactFileName=sh(script:"basename ${artifact}")?.trim();
+                    parentPath=sh(script:"dirname ${artifact}")?.trim();
+                    println(parentPath + ":" + baseArtifactName)
+                    artifactAlias=artifact
+                    if (artifactParts.length>1) {
+                        artifactAlias = artifactParts[1]
+                    }
+                    println("alias :" + artifactAlias)
+                    
+                    if (artifactName.endsWith(".html")) {
                       publishHTML (target: [
                         allowMissing: false,
                         alwaysLinkToLastBuild: false,
                         keepAll: true,
-                        reportDir: ".",
-                        reportFiles: artifact,
-                        reportName: "Report " + artifact.replaceAll("/","")
+                        reportDir: parentPath,
+                        reportFiles: baseArtifactFileName,
+                        reportName: "Report-" + artifactAlias
                       ])
                    } 
+                   
                    
                 }catch(Exception ex) {
                     ex.printStackTrace()
