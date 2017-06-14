@@ -251,8 +251,8 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     String projectName = qubeConfig['name']
     String workdir = "/home/app"
-    def builderImage = docker.image(
-        prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir))
+    String builderImageTag = prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir)
+    def builderImage = docker.image(builderImageTag)
     def containerId=""
     try {
         builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
@@ -266,7 +266,7 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
         } 
     } finally{
         try {
-            sh(script:"docker rmi ${projectName}-${run_id}-build")
+            sh(script:"docker rmi ${builderImageTag}")
             if(containerId) {
                 sh(script:"docker rm -f ${containerId}")
             }
