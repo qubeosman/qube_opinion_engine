@@ -263,8 +263,12 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
             runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
         } 
     } finally{
-        sh(script:"docker rm -f ${container.id}")
-        sh(script:"docker rmi -f ${projectName}-${run_id}-build")
+        try {
+            sh(script:"docker rm -f ${container.id}")
+            sh(script:"docker rmi ${projectName}-${run_id}-build")
+        }catch(Exception ex ) {
+            println("ERROR: " + ex.getMessage())
+        }
     }
 
 }
