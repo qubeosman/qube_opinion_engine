@@ -305,6 +305,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             error ("Task ${task.name} cannot be skipped!")
         }
     } else {
+        try {
         boolean defaultExecuteOutsideToolchainPreference = (task.parent.name != 'build')
         println('defaultExecuteOutsideToolchainPreference: ' + defaultExecuteOutsideToolchainPreference)
         boolean executeOutsideToolchain = task.properties.get('execute_outside_toolchain') ?:defaultExecuteOutsideToolchainPreference
@@ -377,7 +378,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                 }
             }
         }
-
+        }finally{
         if (taskDefInProject?.publish && executeInToolchain) {
             for (artifactVal in taskDefInProject.publish) {
                 try {
@@ -419,6 +420,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     ex.printStackTrace()
                 }
             }
+        }
         }
     }
 }
