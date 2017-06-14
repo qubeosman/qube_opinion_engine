@@ -253,9 +253,11 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
     String workdir = "/home/app"
     def builderImage = docker.image(
         prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir))
+    def containerId=""
     try {
         builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
             // If it doesn't exist
+            containerId=container.id
             if(supportFortify) {
                 sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
                 sh("docker exec ${container.id} sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\"")
@@ -264,7 +266,9 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
         } 
     } finally{
         try {
-            sh(script:"docker rm -f ${container.id}")
+            if(containerId) {
+                sh(script:"docker rm -f ${containerId}")
+            }
             sh(script:"docker rmi ${projectName}-${run_id}-build")
         }catch(Exception ex ) {
             println("ERROR: " + ex.getMessage())
