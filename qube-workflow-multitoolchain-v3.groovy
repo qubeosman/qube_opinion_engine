@@ -225,7 +225,7 @@ node {
             sh (script:"docker rm -f fortify-${run_id}")
         }
         pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
-
+        sh (script: "docker rmi -f Dockerfile-build-{run_id}")
     }
 }
 
