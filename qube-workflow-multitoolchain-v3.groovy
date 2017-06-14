@@ -267,9 +267,6 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
     } finally{
         try {
             sh(script:"docker rmi ${builderImageTag}")
-            if(containerId) {
-                sh(script:"docker rm -f ${containerId}")
-            }
         }catch(Exception ex ) {
             println("ERROR: " + ex.getMessage())
         }
@@ -384,8 +381,16 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                 if (executeInToolchain) {
                     scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
                 }
-                sh (script: scriptStmt)
-                println(scriptStmt)
+                def statusCode = sh (script: scriptStmt,returnStatus:true)
+                println(scriptStmt + ":" + statusCode)
+                if (statusCode == 1 ) {
+                    currentBuild.result = 'FAILURE'
+                    throw new Exception("$scriptStmt returned error code :" + statusCode)
+                }
+                if(statusCode == 2 ) {
+                    currentBuild.result = 'UNSTABLE'
+                }
+
                 if (scriptStmt.contains('docker push')) {
                     artifactsImageId = scriptStmt.tokenize(' ').last()
                 }
