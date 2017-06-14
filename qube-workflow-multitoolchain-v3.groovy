@@ -225,7 +225,6 @@ node {
             sh (script:"docker rm -f fortify-${run_id}")
         }
         pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
-        sh (script: "docker rmi -f Dockerfile-build-{run_id}")
     }
 }
 
@@ -254,14 +253,19 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
     String workdir = "/home/app"
     def builderImage = docker.image(
         prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir))
-    builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
-        // If it doesn't exist
-        if(supportFortify) {
-            sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
-            sh("docker exec ${container.id} sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\"")
-        }
-        runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
-    } 
+    try {
+        builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
+            // If it doesn't exist
+            if(supportFortify) {
+                sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
+                sh("docker exec ${container.id} sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\"")
+            }
+            runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
+        } 
+    } finally{
+        sh(script:"docker rm -f ${container.id}")
+        sh(script:"docker rmi -f ${projectName}-${run_id}-build")
+    }
 
 }
 
