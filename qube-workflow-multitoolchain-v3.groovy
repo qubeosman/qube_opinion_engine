@@ -305,112 +305,120 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             error ("Task ${task.name} cannot be skipped!")
         }
     } else {
-        boolean defaultExecuteOutsideToolchainPreference = (task.parent.name != 'build')
-        println('defaultExecuteOutsideToolchainPreference: ' + defaultExecuteOutsideToolchainPreference)
-        boolean executeOutsideToolchain = task.properties.get('execute_outside_toolchain') ?:defaultExecuteOutsideToolchainPreference
-        boolean executeInToolchain = !executeOutsideToolchain
-        println('running inside toolchain? ' + executeInToolchain)
+        try{
+            boolean defaultExecuteOutsideToolchainPreference = (task.parent.name != 'build')
+            println('defaultExecuteOutsideToolchainPreference: ' + defaultExecuteOutsideToolchainPreference)
+            boolean executeOutsideToolchain = task.properties.get('execute_outside_toolchain') ?:defaultExecuteOutsideToolchainPreference
+            boolean executeInToolchain = !executeOutsideToolchain
+            println('running inside toolchain? ' + executeInToolchain)
 
-        // lookup in toolchain
-        taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
+            // lookup in toolchain
+            taskInToolchain = toolchain.manifestObject[task.parent.name+"." + task.name]
 
-        // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
-        def actions = []
-        println("found taskDefInProject.actions : " +taskDefInProject?.actions)
-        if (taskDefInProject?.actions) {
-            // action arg1 arg2 ...
+            // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
+            def actions = []
             println("found taskDefInProject.actions : " +taskDefInProject?.actions)
+            if (taskDefInProject?.actions) {
+                // action arg1 arg2 ...
+                println("found taskDefInProject.actions : " +taskDefInProject?.actions)
 
-            for (action in taskDefInProject.actions) {
-                // actions.add(action)
-                println("found action : " + action)
-                actions << action
-            }
-        } else if (taskInToolchain?.trim()) {
-            actions << taskInToolchain
-        } else if (task.actions) {
-            for (action in task.actions) {
-                // actions.add(action)
-                actions << action
-            }
-        }
-        if (actions.empty) {
-            error ('no action is defined for task: ' + task.name)
-        }
-
-        def args = [:]
-        int count = 0
-        if (taskDefInProject?.args) {
-            for (arg in taskDefInProject?.args) {
-                count++
-                args.put(count, arg)
-                println("found args in project : " + arg)                
-            }   
-        } else if (task.properties) {
-            def taskDefaultArgs = task.properties.get("args")
-            for (arg in taskDefaultArgs) {
-                count++
-                args.put(count, arg)
-                println("found args in opinion : " + arg)                
-
-            }
-        }
-
-        def commands = qubeCommand(
-            actions: actions,
-            args: args,
-            qubeClient: qubeClient,
-            globalVariablesMap: projectVariables,
-            qubeYamlString: qubeYamlString)
-        println(commands.size() + ' command(s) will be run:')
-        for (command in commands) {
-            println('credentialsMetadata.size(): ' + command.credentialsMetadata?.size());
-            qubeship.withQubeCredentials(command.credentialsMetadata) {
-                String scriptStmt = command.fullQubeshipCommand
-                if (executeInToolchain) {
-                    scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
+                for (action in taskDefInProject.actions) {
+                    // actions.add(action)
+                    println("found action : " + action)
+                    actions << action
                 }
-                sh (script: scriptStmt)
-                println(scriptStmt)
-                if (scriptStmt.contains('docker push')) {
-                    artifactsImageId = scriptStmt.tokenize(' ').last()
+            } else if (taskInToolchain?.trim()) {
+                actions << taskInToolchain
+            } else if (task.actions) {
+                for (action in task.actions) {
+                    // actions.add(action)
+                    actions << action
                 }
             }
-        }
+            if (actions.empty) {
+                error ('no action is defined for task: ' + task.name)
+            }
 
-        if (taskDefInProject?.publish && executeInToolchain) {
-            for (artifactVal in taskDefInProject.publish) {
-                try {
-                    artifactParts=artifactVal.tokenize(':')
-                    artifact  = artifactParts[0]
+            def args = [:]
+            int count = 0
+            if (taskDefInProject?.args) {
+                for (arg in taskDefInProject?.args) {
+                    count++
+                    args.put(count, arg)
+                    println("found args in project : " + arg)                
+                }   
+            } else if (task.properties) {
+                def taskDefaultArgs = task.properties.get("args")
+                for (arg in taskDefaultArgs) {
+                    count++
+                    args.put(count, arg)
+                    println("found args in opinion : " + arg)                
 
-                    def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
-                    println(copyStatement)
-                    sh(script: copyStatement, label:"Transfering artifacts from container")
+                }
+            }
 
-                    baseArtifactFileName=sh(script:"basename ${artifact}")?.trim();
-                    parentPath=sh(script:"dirname ${artifact}")?.trim();
-                    println(parentPath + ":" + baseArtifactName)
-                    artifactAlias=baseArtifactFileName
-                    //if (artifactParts.length>1) {
-                    //    artifactAlias = artifactParts[1]
-                    //}
-                    println("alias :" + artifactAlias)
-                    
-                    if (baseArtifactFileName.endsWith(".html")) {
-                      publishHTML (target: [
-                        allowMissing: false,
-                        alwaysLinkToLastBuild: false,
-                        keepAll: true,
-                        reportDir: parentPath,
-                        reportFiles: baseArtifactFileName,
-                        reportName: "Report-" + artifactAlias
-                      ])
-                   } 
-                   
-                   
-                }catch(Exception ex) {
-                    ex.printStackTrace()
+            def commands = qubeCommand(
+                actions: actions,
+                args: args,
+                qubeClient: qubeClient,
+                globalVariablesMap: projectVariables,
+                qubeYamlString: qubeYamlString)
+            println(commands.size() + ' command(s) will be run:')
+            for (command in commands) {
+                println('credentialsMetadata.size(): ' + command.credentialsMetadata?.size());
+                qubeship.withQubeCredentials(command.credentialsMetadata) {
+                    String scriptStmt = command.fullQubeshipCommand
+                    if (executeInToolchain) {
+                        scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
+                    }
+                    sh (script: scriptStmt)
+                    println(scriptStmt)
+                    if (scriptStmt.contains('docker push')) {
+                        artifactsImageId = scriptStmt.tokenize(' ').last()
+                    }
+                }
+            }
+        } finally{
+            if (taskDefInProject?.publish && executeInToolchain) {
+                for (artifactVal in taskDefInProject.publish) {
+                    try {
+                        artifactParts=artifactVal.tokenize(':')
+                        artifact  = artifactParts[0]
+
+
+                        baseArtifactFileName=sh(returnStdout: true, script:"basename ${artifact}")
+
+                        baseArtifactFileName=baseArtifactFileName?.trim()
+                        println("baseArtifactFileName:" + baseArtifactFileName)
+
+                        parentPath=sh(returnStdout: true, script:"dirname ${artifact}")
+                        parentPath=parentPath?.trim()
+                        println("parentPath :" + baseArtifactFileName)
+                        artifactAlias=baseArtifactFileName
+                        sh(script:"mkdir -p ./${parentPath}")
+                        def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ./${parentPath}"
+                        println(copyStatement)
+                        sh(script: copyStatement, label:"Transfering artifacts from container")
+                        //if (artifactParts.length>1) {
+                        //    artifactAlias = artifactParts[1]
+                        //}
+                        println("alias :" + artifactAlias)
+                        
+                        if (baseArtifactFileName.endsWith(".html")) {
+                          publishHTML (target: [
+                            allowMissing: false,
+                            alwaysLinkToLastBuild: false,
+                            keepAll: true,
+                            reportDir: parentPath,
+                            reportFiles: baseArtifactFileName,
+                            reportName: "Report-" + artifactAlias
+                          ])
+                       } 
+                       
+                       
+                    }catch(Exception ex) {
+                        ex.printStackTrace()
+                    }
                 }
             }
         }
