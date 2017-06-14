@@ -266,10 +266,10 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
         } 
     } finally{
         try {
+            sh(script:"docker rmi ${projectName}-${run_id}-build")
             if(containerId) {
                 sh(script:"docker rm -f ${containerId}")
             }
-            sh(script:"docker rmi ${projectName}-${run_id}-build")
         }catch(Exception ex ) {
             println("ERROR: " + ex.getMessage())
         }
