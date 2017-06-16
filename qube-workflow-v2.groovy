@@ -57,16 +57,7 @@ node {
 
     String run_id = randomUUID() as String
     boolean supportFortify=false
-    wrap([$class: 'ConfigFileBuildWrapper', 
-        managedFiles: [
-            [fileId: 'fortify.license', 
-            targetLocation: "/tmp/${run_id}/fortify.license"]]]) {
-        //def builderImage = docker.image(
-        //    prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir))
-        sh (script:"docker create  -v /meta --name meta-${run_id} busybox")
-        sh (script:"docker cp /tmp/${run_id}/fortify.license meta-${run_id}:/meta")
-    }
-
+    sh (script:"docker create  -v /meta --name meta-${run_id} busybox")
 
     try {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
@@ -172,7 +163,7 @@ node {
                 // resolve all qubeship args in projectVariables
                 projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
                 envVars = qubeship.getEnvVars()
-                envVarsString = ""
+                envVarsString = "--volumes-from meta-${run_id}"
                 if (envVars != null && projectVariables != null) {
                     for (qubeshipVariable in projectVariables) {
                         if (qubeshipVariable.value.getFirst().getType() in String) {
@@ -187,8 +178,14 @@ node {
                 }
                 if(supportFortify) {
                     //sh (script:"docker pull qubeship/fortify:4.21")
+                    wrap([$class: 'ConfigFileBuildWrapper', 
+                    managedFiles: [
+                        [fileId: 'fortify.license', 
+                        targetLocation: "/tmp/${run_id}/fortify.license"]]]) {
+                        sh (script:"docker cp /tmp/${run_id}/fortify.license meta-${run_id}:/meta")
+                    }
                     sh (script:"docker create --name fortify-${run_id} qubeship/fortify:4.21")
-                    envVarsString+=" --volumes-from meta-${run_id} --volumes-from fortify-${run_id}"
+                    envVarsString+=" --volumes-from fortify-${run_id}"
                 }
             }
             try {
