@@ -1,5 +1,8 @@
 import com.ca.io.qubeship.apis.QubeshipCommandResolver
 import com.ca.io.qubeship.client.model.opinions.Opinion
+import com.ca.io.qubeship.client.model.opinions.Stage
+import com.ca.io.qubeship.client.model.toolchains.Toolchain
+
 import com.ca.io.qubeship.utils.GramlClient
 import org.yaml.snakeyaml.Yaml
 
@@ -40,8 +43,8 @@ node {
     // def endpointsMap = [:]
 
     String toolchainRegistryUrl = ""
-    String toolchainRegistryCredentialsPath = null
-    String toolchainPrefix = ""
+    String toolchainRegistryCredentialsPath = ""
+    String toolchainPrefix = null
 
     def opinionList = []
 
@@ -49,6 +52,11 @@ node {
     println("qubeshipUrl is " + qubeshipUrl)
 
     String analyticsEndpoint = "${env.ANALYTICS_ENDPOINT}"
+
+    boolean supportTwistlock = false
+
+    String run_id = randomUUID() as String
+    sh (script:"docker create  -v /meta --name meta-${run_id} busybox")
 
     try {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
@@ -89,6 +97,7 @@ node {
                 // String qube_yaml = new String(b64_decoded)
                 // qubeConfig = getYaml(qube_yaml)
                 def qubeYamlFile = env.WORKSPACE + '/qube.yaml'
+
                 qubeYamlString = sh(returnStdout: true, script: "if [ -e $qubeYamlFile ]; then cat $qubeYamlFile; fi")
                 qubeConfig = getYaml(qubeYamlString)
                 initValidateQubeConfig(qubeConfig)
@@ -131,12 +140,14 @@ node {
                 sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
                 variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
                 Object[] vars = getArray(variableConfig.variables)
-                for( int i = 0; i<vars?.length; i++){
+    
+                for (int i = 0; i < vars?.length; i++) { 
                     def var = vars[i];
                     String varName = var.name
                     boolean optional = var.optional
                     String value = var.value
                     println(varName + ', ' + optional)
+
                     if (!optional && !value) {
                         error (String.format("Required variable(s) %s missing!", varName))
                     }
@@ -145,10 +156,13 @@ node {
                     }
                 }
 
+                // isSupportTwistlock?
+                supportTwistlock = projectVariables['supportTwistlock'] ?: false
+
                 // resolve all qubeship args in projectVariables
                 projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
                 envVars = qubeship.getEnvVars()
-                envVarsString = ""
+                envVarsString = "--volumes-from meta-${run_id} "
                 if (envVars != null && projectVariables != null) {
                     for (qubeshipVariable in projectVariables) {
                         if (qubeshipVariable.value.getFirst().getType() in String) {
@@ -161,75 +175,107 @@ node {
                         }
                     }
                 }
+                if (supportTwistlock) {
+                    sh (script: "docker create --name twistlock-${run_id} qubeship/twistlock:latest")
+                    envVarsString += " --volumes-from twistlock-${run_id}"
+                }
             }
-
-            // TODO: find the way to get gcr credentials
-            docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
-                process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix)
-            }
-
-            stage('Publish Artifacts') {
-                def payloadImageId = """{
-                    \"type\": \"image\",
-                    \"contentType\": \"text/plain\",
-                    \"title\": \"${artifactsImageId}\",
-                    \"url\": \"${artifactsImageId}\",
-                    \"isResource\": false
-                }"""
-                def payloadLogURL = """{
-                    \"type\": \"log\",
-                    \"contentType\": \"text/plain\",
-                    \"title\": \"Full Log\",
-                    \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
-                    \"isResource\": true
-                }"""
-                String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
-                qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
-                qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
-            }
+            try {
+                docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
+                    process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, supportTwistlock)
+                }
+            } finally {
+              stage('Publish Artifacts') {
+                  def payloadImageId = """{
+                      \"type\": \"image\",
+                      \"contentType\": \"text/plain\",
+                      \"title\": \"${artifactsImageId}\",
+                      \"url\": \"${artifactsImageId}\",
+                      \"isResource\": false
+                  }"""
+                  def payloadLogURL = """{
+                      \"type\": \"log\",
+                      \"contentType\": \"text/plain\",
+                      \"title\": \"Full Log\",
+                      \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                      \"isResource\": true
+                  }"""
+                  String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
+                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+              }
+          }
         }
     } finally {
         // signal: build end
+        sh (script:"docker rm meta-${run_id}")
+        if(supportTwistlock) {
+            sh (script:"docker rm -f fortify-${run_id}")
+        }
         pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
     }
 }
 
-def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix) {
+
+def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, supportTwistlock) {
     def toolchain_prefix = (toolchainPrefix?:"qubeship") + "/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     String projectName = qubeConfig['name']
     String workdir = "/home/app"
-    def builderImage = docker.image(
-        prepareDockerFileForBuild(toolchain_img, projectName, workdir))
-
-    builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
-        for (int i = 0; i < opinionList.length; i++) {
-            def item = opinionList[i];
-            stage(item.name) {
-                runStage(item, toolchain, qubeConfig, qubeClient, container, workdir)
+    String builderImageTag = prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir)
+    def builderImage = docker.image(builderImageTag)
+    def containerId=""
+    try {
+        builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
+            // If it doesn't exist
+            containerId=container.id
+            if(supportTwistlock) {
+                sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
+                sh("docker exec ${container.id} sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\"")
             }
+            runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
+        } 
+    } finally{
+        try {
+            sh(script:"docker rmi ${builderImageTag}")
+        }catch(Exception ex ) {
+            println("ERROR: " + ex.getMessage())
         }
     }
+
 }
 
 def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
-    // skip if the stage is skippable or throw error
-    if ('skip' in qubeConfig[stageObj.name] && qubeConfig[stageObj.name]['skip']) {
-        if (!stageObj.properties.skippable) {
-            error ("Stage ${stageObj.name} cannot be skipped!")
-        }
-    } else {
-        Object[] taskList = getArray(stageObj.tasks)
-        for (int i = 0; i < taskList.length; i++) {
-            def task = taskList[i];
-            runTask(task, toolchain, qubeConfig, qubeClient, container, workdir)
+    stage(stageObj.name) {
+        // skip if the stage is skippable or throw error
+        if ('skip' in qubeConfig[stageObj.name] && qubeConfig[stageObj.name]['skip']) {
+            if (!stageObj.properties.skippable) {
+                error ("Stage ${stageObj.name} cannot be skipped!")
+            }
+        } else {
+            Object[] taskList = getArray(stageObj.tasks)
+            for (int i = 0; i < taskList.length; i++) {
+                def task = taskList[i];
+                status=runTask(task, toolchain, qubeConfig, qubeClient, container, workdir)
+            }
         }
     }
+    if(stageObj.getProperties().containsKey("next")) {
+        def nextItems = (LinkedList<Stage>)stageObj.getProperties().get("next");
+        Object[] stages=getArray(nextItems);
+        for( int i = 0; i<stages?.length; i++){ 
+           runStage(stages[i], toolchain, qubeConfig, qubeClient, container, workdir) 
+        }
+    }else{
+        println("stage : " + stageObj.name + " : complete")
+    }
+
 }
 
 def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=null) {
     def taskDefInProject = null
     if (task.parent.name in qubeConfig && task.name in qubeConfig[task.parent.name]) {
+        println("found taskdef in project: " + task.parent.name + ":" + task.name)
         taskDefInProject = qubeConfig[task.parent.name][task.name]
     }
 
@@ -250,10 +296,16 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
 
         // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
         def actions = []
+        println("found taskDefInProject.actions : " +taskDefInProject?.actions)
+        try {
+
         if (taskDefInProject?.actions) {
             // action arg1 arg2 ...
+            println("found taskDefInProject.actions : " +taskDefInProject?.actions)
+
             for (action in taskDefInProject.actions) {
                 // actions.add(action)
+                println("found action : " + action)
                 actions << action
             }
         } else if (taskInToolchain?.trim()) {
@@ -274,12 +326,16 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             for (arg in taskDefInProject?.args) {
                 count++
                 args.put(count, arg)
-            }
+
+                println("found args in project : " + arg)                
+            }   
         } else if (task.properties) {
             def taskDefaultArgs = task.properties.get("args")
             for (arg in taskDefaultArgs) {
                 count++
                 args.put(count, arg)
+                println("found args in opinion : " + arg)                
+
             }
         }
 
@@ -297,18 +353,64 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                 if (executeInToolchain) {
                     scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
                 }
-                sh (script: scriptStmt)
+                def statusCode = sh (script: scriptStmt,returnStatus:true)
+                println(scriptStmt + ":" + statusCode)
+                if (statusCode == 1 ) {
+                    currentBuild.result = 'FAILURE'
+                    throw new Exception("$scriptStmt returned error code :" + statusCode)
+                }
+                if(statusCode == 2 ) {
+                    currentBuild.result = 'UNSTABLE'
+                }
+
                 if (scriptStmt.contains('docker push')) {
                     artifactsImageId = scriptStmt.tokenize(' ').last()
                 }
             }
         }
-
+        }finally{
         if (taskDefInProject?.publish && executeInToolchain) {
-            for (artifact in taskDefInProject.publish) {
-                def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ."
-                sh(script: copyStatement, label:"Transfering artifacts from container")
+            for (artifactVal in taskDefInProject.publish) {
+                try {
+                    artifactParts=artifactVal.tokenize(':')
+                    artifact  = artifactParts[0]
+
+
+                    baseArtifactFileName=sh(returnStdout: true, script:"basename ${artifact}")
+
+                    baseArtifactFileName=baseArtifactFileName?.trim()
+                    println("baseArtifactFileName:" + baseArtifactFileName)
+
+                    parentPath=sh(returnStdout: true, script:"dirname ${artifact}")
+                    parentPath=parentPath?.trim()
+                    println("parentPath :" + baseArtifactFileName)
+                    artifactAlias=baseArtifactFileName
+                    sh(script:"mkdir -p ./${parentPath}")
+                    def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ./${parentPath}"
+                    println(copyStatement)
+                    sh(script: copyStatement, label:"Transfering artifacts from container")
+                    //if (artifactParts.length>1) {
+                    //    artifactAlias = artifactParts[1]
+                    //}
+                    println("alias :" + artifactAlias)
+                    
+                    if (baseArtifactFileName.endsWith(".html")) {
+                      publishHTML (target: [
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: false,
+                        keepAll: true,
+                        reportDir: parentPath,
+                        reportFiles: baseArtifactFileName,
+                        reportName: "Report-" + artifactAlias
+                      ])
+                   } 
+                   
+                   
+                }catch(Exception ex) {
+                    ex.printStackTrace()
+                }
             }
+        }
         }
     }
 }
@@ -343,10 +445,10 @@ def initValidateQubeConfig(qubeConfig) {
   }
 }
 
-def prepareDockerFileForBuild(image, project_name, workdir) {
-    String dockerFile = "Dockerfile-build"
+def prepareDockerFileForBuild(image, id, project_name, workdir) {
+    String dockerFile = "Dockerfile-build-" + id
     String imageVersion = "${env.BUILD_NUMBER}"
-
+    
     sh(script: "echo FROM ${image} > ${dockerFile} && \
     echo RUN mkdir -p ${workdir} >> ${dockerFile} && \
     echo WORKDIR ${workdir} >> ${dockerFile} && \
@@ -355,8 +457,9 @@ def prepareDockerFileForBuild(image, project_name, workdir) {
 
     sh(script: 'cat ' + dockerFile)
 
-    String buiderImageTag = project_name + "-build"
+    String buiderImageTag = project_name + "-" + id + "-build"
     buiderImageTag = buiderImageTag.replaceAll("\\s+|_+", "-").toLowerCase()
+    docker.image(image).pull()
     sh(script: "docker build -t ${buiderImageTag} -f ${dockerFile} .")
 
     return buiderImageTag
