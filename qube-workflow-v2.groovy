@@ -1,7 +1,6 @@
 import com.ca.io.qubeship.apis.QubeshipCommandResolver
 import com.ca.io.qubeship.client.model.opinions.Opinion
 import com.ca.io.qubeship.client.model.opinions.Stage
-
 import com.ca.io.qubeship.client.model.toolchains.Toolchain
 
 import com.ca.io.qubeship.utils.GramlClient
