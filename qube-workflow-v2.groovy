@@ -162,7 +162,7 @@ node {
                 // resolve all qubeship args in projectVariables
                 projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
                 envVars = qubeship.getEnvVars()
-                envVarsString = "--volumes-from meta-${run_id} "
+                envVarsString = "--volumes-from ${run_id}-meta "
                 if (envVars != null && projectVariables != null) {
                     for (qubeshipVariable in projectVariables) {
                         if (qubeshipVariable.value.getFirst().getType() in String) {
@@ -176,8 +176,8 @@ node {
                     }
                 }
                 if (supportTwistlock) {
-                    sh (script: "docker create --name twistlock-${run_id} qubeship/twistlock:latest")
-                    envVarsString += " --volumes-from twistlock-${run_id}"
+                    sh (script: "docker create --name ${run_id}-twistlock qubeship/twistlock:latest")
+                    envVarsString += " --volumes-from ${run_id}-twistlock"
                 }
             }
             try {
@@ -208,10 +208,7 @@ node {
         }
     } finally {
         // signal: build end
-        sh (script:"docker rm meta-${run_id}")
-        if(supportTwistlock) {
-            sh (script:"docker rm -f fortify-${run_id}")
-        }
+        sh (script: "docker rm -f $(docker ps -a --filter \"name=${run_id}-*\")")
         pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
     }
 }
@@ -224,25 +221,17 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
     String workdir = "/home/app"
     String builderImageTag = prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir)
     def builderImage = docker.image(builderImageTag)
-    def containerId=""
     try {
         builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
-            // If it doesn't exist
-            containerId=container.id
-            if(supportTwistlock) {
-                sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
-                sh("docker exec ${container.id} sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\"")
-            }
             runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
         } 
-    } finally{
+    } finally {
         try {
             sh(script:"docker rmi ${builderImageTag}")
-        }catch(Exception ex ) {
+        } catch(Exception ex) {
             println("ERROR: " + ex.getMessage())
         }
     }
-
 }
 
 def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
@@ -275,7 +264,6 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
 def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=null) {
     def taskDefInProject = null
     if (task.parent.name in qubeConfig && task.name in qubeConfig[task.parent.name]) {
-        println("found taskdef in project: " + task.parent.name + ":" + task.name)
         taskDefInProject = qubeConfig[task.parent.name][task.name]
     }
 
@@ -296,7 +284,6 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
 
         // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
         def actions = []
-        println("found taskDefInProject.actions : " +taskDefInProject?.actions)
         try {
 
         if (taskDefInProject?.actions) {
