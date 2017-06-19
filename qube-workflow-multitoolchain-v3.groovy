@@ -44,7 +44,6 @@ node {
     // def endpointsMap = [:]
 
     String toolchainRegistryUrl = ""
-
     String toolchainRegistryCredentialsPath = ""
     String toolchainPrefix = null
 
@@ -54,10 +53,17 @@ node {
     println("qubeshipUrl is " + qubeshipUrl)
 
     String analyticsEndpoint = "${env.ANALYTICS_ENDPOINT}"
-
     String run_id = randomUUID() as String
     boolean supportFortify=false
-    sh (script:"docker create  -v /meta --name meta-${run_id} busybox")
+    wrap([$class: 'ConfigFileBuildWrapper', 
+        managedFiles: [
+            [fileId: 'fortify.license', 
+            targetLocation: "/tmp/${run_id}/fortify.license"]]]) {
+        //def builderImage = docker.image(
+        //    prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir))
+        sh (script:"docker create  -v /meta --name meta-${run_id} busybox")
+        sh (script:"docker cp /tmp/${run_id}/fortify.license meta-${run_id}:/meta")
+    }
 
     try {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
@@ -68,8 +74,10 @@ node {
                     echo "replacing empty commit hash with refspec " + project.scm.refspec
                     commithash = project.scm.refspec
                 }
+
                 // load owner info
                 def owner = qubeApi(httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false, qubeClient: qubeClient)
+
                 // signal: build start
                 pipelineMetricsPayload['company'] = "${env.COMPANY}"
                 pipelineMetricsPayload['install_type'] = "${env.INSTALL_TYPE}"
@@ -89,7 +97,7 @@ node {
                 // sh (script: "rm -Rf qube_utils")
                 sh (script: "if [ ! -d qube_utils ]; then git clone https://github.com/Qubeship/qube_utils qube_utils; else cd qube_utils; git pull; cd -; fi",
                     label:"Fetching qubeship scripts and templates")
-
+                
                 // get the contents of qube.yaml not from the API but the file in the source repo
                 // String b64_encoded_qube_yaml = project.qubeYaml
                 // byte[] b64_decoded = b64_encoded_qube_yaml.decodeBase64()
@@ -103,10 +111,12 @@ node {
 
                 // load toolchain
                 toolchain = qubeApi(httpMethod: "GET", resource: "toolchains", id: project.toolchainId, qubeClient: qubeClient)
+
+                if (!toolchain) {
+                    ArrayList<Toolchain> toolchains = getProjectToolchains(project)
+                }
                 // find the URL and credentials of the registry where the toolchain image is
                 def toolchainRegistry = qubeApi(httpMethod: "GET", resource: "endpoints", id: toolchain.endpointId, qubeClient: qubeClient)
-
-
                 if (toolchainRegistry) {
                     toolchainRegistryUrl = toolchainRegistry.endPoint
                     if(toolchainRegistry.credentialPath) {
@@ -138,11 +148,11 @@ node {
                     sh (returnStdout: true, script: "echo $b64_encoded_opinion_yaml | base64 -d > opinion.yaml")
                     opinionList = getArray(opinion.opinionItems)
                 }
-
+                
                 sh (returnStdout: true, script: "spruce merge --cherry-pick variables opinion.yaml qube.yaml qube_utils/merge_templates/variables.yaml > variables.yaml")
                 variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
                 Object[] vars = getArray(variableConfig.variables)
-    
+                
                 for( int i = 0; i<vars?.length; i++){ 
                     def var = vars[i];
                     String varName = var.name
@@ -163,7 +173,7 @@ node {
                 // resolve all qubeship args in projectVariables
                 projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
                 envVars = qubeship.getEnvVars()
-                envVarsString = "--volumes-from meta-${run_id} "
+                envVarsString = ""
                 if (envVars != null && projectVariables != null) {
                     for (qubeshipVariable in projectVariables) {
                         if (qubeshipVariable.value.getFirst().getType() in String) {
@@ -178,42 +188,35 @@ node {
                 }
                 if(supportFortify) {
                     //sh (script:"docker pull qubeship/fortify:4.21")
-                    wrap([$class: 'ConfigFileBuildWrapper', 
-                    managedFiles: [
-                        [fileId: 'fortify.license', 
-                        targetLocation: "/tmp/${run_id}/fortify.license"]]]) {
-                        sh (script:"docker cp /tmp/${run_id}/fortify.license meta-${run_id}:/meta")
-                    }
                     sh (script:"docker create --name fortify-${run_id} qubeship/fortify:4.21")
-                    envVarsString+=" --volumes-from fortify-${run_id}"
+                    envVarsString+=" --volumes-from meta-${run_id} --volumes-from fortify-${run_id}"
                 }
             }
-            try {
-              // TODO: find the way to get gcr credentials
-              docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
-                  process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, supportFortify)
-              }
-            }finally{
-              stage('Publish Artifacts') {
-                  def payloadImageId = """{
-                      \"type\": \"image\",
-                      \"contentType\": \"text/plain\",
-                      \"title\": \"${artifactsImageId}\",
-                      \"url\": \"${artifactsImageId}\",
-                      \"isResource\": false
-                  }"""
-                  def payloadLogURL = """{
-                      \"type\": \"log\",
-                      \"contentType\": \"text/plain\",
-                      \"title\": \"Full Log\",
-                      \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
-                      \"isResource\": true
-                  }"""
-                  String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
-                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
-                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
-              }
-          }
+
+            // TODO: find the way to get gcr credentials
+            docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
+                process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, supportFortify)
+            }
+
+            stage('Publish Artifacts') {
+                def payloadImageId = """{
+                    \"type\": \"image\",
+                    \"contentType\": \"text/plain\",
+                    \"title\": \"${artifactsImageId}\",
+                    \"url\": \"${artifactsImageId}\",
+                    \"isResource\": false
+                }"""
+                def payloadLogURL = """{
+                    \"type\": \"log\",
+                    \"contentType\": \"text/plain\",
+                    \"title\": \"Full Log\",
+                    \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                    \"isResource\": true
+                }"""
+                String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
+                qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+            }
         }
     } finally {
         // signal: build end
@@ -225,8 +228,25 @@ node {
     }
 }
 
+def getProjectToolchains(project) {
+    Toolchain tc = null;
+    ArrayList toolchains = new ArrayList();
+    if ( project.toolchain ) {
+        if(project.toolchain?.id) {
+            tc = qubeApi(httpMethod: "GET", resource: "toolchains", id: project.toolchain?.id, qubeClient: qubeClient)
+        }else if (project.toolchain?.imageName) {
+            tc = project.toolchain
+        }
+        toolchains.add(tc)
+    } else if (project.toolchains) {
+        toolchains = project.toolchains
+    }
+    return toolchains
+
+}
 
 def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, supportFortify) {
+    // def toolchain_prefix = "gcr.io/qubeship-partners/"
     def toolchain_prefix = (toolchainPrefix?:"qubeship") + "/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     String projectName = qubeConfig['name']
@@ -287,7 +307,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
         println("found taskdef in project: " + task.parent.name + ":" + task.name)
         taskDefInProject = qubeConfig[task.parent.name][task.name]
     }
-
+    
     // skip if the task is skippable or throw error
     if (taskDefInProject?.skip) {
         if (!task.properties.skippable) {
@@ -335,7 +355,6 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             for (arg in taskDefInProject?.args) {
                 count++
                 args.put(count, arg)
-
                 println("found args in project : " + arg)                
             }   
         } else if (task.properties) {
