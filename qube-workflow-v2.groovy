@@ -56,7 +56,7 @@ node {
     boolean supportTwistlock = false
 
     String run_id = randomUUID() as String
-    sh (script:"docker create  -v /meta --name meta-${run_id} busybox")
+    sh (script:"docker create  -v /meta --name ${run_id}-meta busybox")
 
     try {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
@@ -208,7 +208,7 @@ node {
         }
     } finally {
         // signal: build end
-        sh (script: "docker rm -f $(docker ps -a --filter \"name=${run_id}-*\")")
+        sh (script: "docker rm -f \$(docker ps -aq --filter \"name=${run_id}-*\")")
         pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
     }
 }
