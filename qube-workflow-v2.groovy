@@ -44,7 +44,6 @@ node {
     // def endpointsMap = [:]
 
     String toolchainRegistryUrl = ""
-
     String toolchainRegistryCredentialsPath = ""
     String toolchainPrefix = null
 
@@ -144,7 +143,7 @@ node {
                 variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
                 Object[] vars = getArray(variableConfig.variables)
     
-                for (int i = 0; i < vars?.length; i++) {
+                for (int i = 0; i < vars?.length; i++) { 
                     def var = vars[i];
                     String varName = var.name
                     boolean optional = var.optional
