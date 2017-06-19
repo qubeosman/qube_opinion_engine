@@ -1,6 +1,7 @@
 import com.ca.io.qubeship.apis.QubeshipCommandResolver
 import com.ca.io.qubeship.client.model.opinions.Opinion
 import com.ca.io.qubeship.client.model.opinions.Stage
+
 import com.ca.io.qubeship.client.model.toolchains.Toolchain
 
 import com.ca.io.qubeship.utils.GramlClient
@@ -43,6 +44,7 @@ node {
     // def endpointsMap = [:]
 
     String toolchainRegistryUrl = ""
+
     String toolchainRegistryCredentialsPath = ""
     String toolchainPrefix = null
 
@@ -53,10 +55,10 @@ node {
 
     String analyticsEndpoint = "${env.ANALYTICS_ENDPOINT}"
 
-    boolean supportTwistlock = false
-
     String run_id = randomUUID() as String
-    sh (script:"docker create  -v /meta --name ${run_id}-meta busybox")
+    sh (script:"docker create  -v /meta --name meta-${run_id} busybox")
+    boolean supportFortify=false
+    boolean supportTwistlock = false
 
     try {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
@@ -67,10 +69,8 @@ node {
                     echo "replacing empty commit hash with refspec " + project.scm.refspec
                     commithash = project.scm.refspec
                 }
-
                 // load owner info
                 def owner = qubeApi(httpMethod: "GET", resource: "users", id: project.owner, exchangeToken: false, qubeClient: qubeClient)
-
                 // signal: build start
                 pipelineMetricsPayload['company'] = "${env.COMPANY}"
                 pipelineMetricsPayload['install_type'] = "${env.INSTALL_TYPE}"
@@ -121,6 +121,9 @@ node {
                     toolchainRegistryUrl = 'https://index.docker.io/'
                     toolchainPrefix= "qubeship"
                 }
+                println("toolchain prefix:" + toolchainPrefix)
+                println("toolchain credential:" + toolchainRegistryCredentialsPath)
+                println("toolchain toolchainRegistryUrl:" + toolchainRegistryUrl)
 
                 // TODO: opinion file name may be different
                 String opinionYamlFilePath = env.WORKSPACE + '/opinion.yaml'
@@ -141,13 +144,12 @@ node {
                 variableConfig = getConfig(env.WORKSPACE + "/variables.yaml")
                 Object[] vars = getArray(variableConfig.variables)
     
-                for (int i = 0; i < vars?.length; i++) { 
+                for (int i = 0; i < vars?.length; i++) {
                     def var = vars[i];
                     String varName = var.name
                     boolean optional = var.optional
                     String value = var.value
                     println(varName + ', ' + optional)
-
                     if (!optional && !value) {
                         error (String.format("Required variable(s) %s missing!", varName))
                     }
@@ -156,8 +158,8 @@ node {
                     }
                 }
 
-                // isSupportTwistlock?
                 supportTwistlock = projectVariables['supportTwistlock'] ?: false
+                supportFortify = projectVariables['supportFortify'] ?: false
 
                 // resolve all qubeship args in projectVariables
                 projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
@@ -175,15 +177,25 @@ node {
                         }
                     }
                 }
+                if(supportFortify) {
+                    wrap([$class: 'ConfigFileBuildWrapper', 
+                    managedFiles: [
+                        [fileId: 'fortify.license', 
+                        targetLocation: "/tmp/${run_id}/fortify.license"]]]) {
+                        sh (script:"docker create --name ${run_id}-fortify qubeship/fortify:4.21")
+                        sh (script:"docker cp /tmp/${run_id}/fortify.license ${run_id}-fortify:/opt/fortify/")
+                        envVarsString+=" --volumes-from ${run_id}-fortify"
+                    }
+                }
                 if (supportTwistlock) {
                     sh (script: "docker create --name ${run_id}-twistlock qubeship/twistlock:latest")
                     envVarsString += " --volumes-from ${run_id}-twistlock"
                 }
             }
             try {
-                docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
-                    process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, supportTwistlock)
-                }
+              docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
+                  process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, supportFortify, supportTwistlock)
+              }
             } finally {
               stage('Publish Artifacts') {
                   def payloadImageId = """{
@@ -214,15 +226,22 @@ node {
 }
 
 
-def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, supportTwistlock) {
+def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, supportFortify, supportTwistlock) {
     def toolchain_prefix = (toolchainPrefix?:"qubeship") + "/"
     def toolchain_img = toolchain_prefix +  toolchain.imageName + ":" + toolchain.tagName
     String projectName = qubeConfig['name']
     String workdir = "/home/app"
     String builderImageTag = prepareDockerFileForBuild(toolchain_img, run_id, projectName, workdir)
     def builderImage = docker.image(builderImageTag)
+    def containerId=""
     try {
         builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
+            // If it doesn't exist
+            containerId=container.id
+            if(supportFortify) {
+                //sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
+                sh("docker exec ${container.id} sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\"")
+            }
             runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
         } 
     } finally {
@@ -232,6 +251,7 @@ def process(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolc
             println("ERROR: " + ex.getMessage())
         }
     }
+
 }
 
 def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
@@ -264,6 +284,7 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
 def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=null) {
     def taskDefInProject = null
     if (task.parent.name in qubeConfig && task.name in qubeConfig[task.parent.name]) {
+        println("found taskdef in project: " + task.parent.name + ":" + task.name)
         taskDefInProject = qubeConfig[task.parent.name][task.name]
     }
 
@@ -284,6 +305,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
 
         // the order of precedence: qubeConfig(qube.yaml) -> toolchain.manifest -> opinion
         def actions = []
+        println("found taskDefInProject.actions : " +taskDefInProject?.actions)
         try {
 
         if (taskDefInProject?.actions) {
