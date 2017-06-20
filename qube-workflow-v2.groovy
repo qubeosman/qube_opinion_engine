@@ -54,7 +54,7 @@ node {
     String analyticsEndpoint = "${env.ANALYTICS_ENDPOINT}"
 
     String run_id = randomUUID() as String
-    sh (script:"docker create  -v /meta --name meta-${run_id} busybox")
+    sh (script:"docker create  -v /meta --name ${run_id}-meta busybox")
     boolean supportFortify=false
     boolean supportTwistlock = false
     def servicesList = [] as LinkedList
@@ -176,19 +176,9 @@ node {
                     }
                 }
                 if(supportFortify) {
-                    wrap([$class: 'ConfigFileBuildWrapper', 
-                    managedFiles: [
-                        [fileId: 'fortify.license', 
-                        targetLocation: "/tmp/${run_id}/fortify.license"]]]) {
-                        sh (script:"docker create --name ${run_id}-fortify qubeship/fortify:4.21")
-                        sh (script:"docker cp /tmp/${run_id}/fortify.license ${run_id}-fortify:/opt/fortify/")
-                        envVarsString+=" --volumes-from ${run_id}-fortify"
-                    }
                     servicesList<<"fortify"
                 }
                 if (supportTwistlock) {
-                    sh (script: "docker create --name ${run_id}-twistlock qubeship/twistlock:latest")
-                    envVarsString += " --volumes-from ${run_id}-twistlock -v /var/run/docker.sock:/var/run/docker.sock"
                     servicesList<<"twistlock"
                 }
             }
@@ -197,7 +187,7 @@ node {
               def action = this.&processOpinion 
               def index = 0
               docker.withRegistry(toolchainRegistryUrl, toolchainRegistryCredentialsPath) {
-                  process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, getArray(servicesList), preProcessCmdList, action)
+                  process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, getArray(servicesList), preProcessCmdList, projectVariables, action)
               }
             } finally {
               stage('Publish Artifacts') {
@@ -228,31 +218,52 @@ node {
     }
 }
 
-def process(int index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, servicesList, preProcessCmdList, action) {
+def process(int index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, servicesList, preProcessCmdList, projectVariables, action) {
     if(index < servicesList.length )   {
         def service = servicesList[index];
         def wrap = { x ->
-            def processor = this.&process
-            processor.resolveStrategy = Closure.DELEGATE_FIRST
-            processor.delegate=process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, servicesList, preProcessCmdList, action)
             println(service)
             index++;
             if(service == "fortify") {
                 //sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
+                sh (script:"docker pull qubeship/fortify:4.21")
+                println("processing service fortify")
                 wrap([$class: 'ConfigFileBuildWrapper', 
                     managedFiles: [
                         [fileId: 'fortify.license', 
                         targetLocation: "/tmp/${run_id}/fortify.license"]]]) {
-                    preProcessCmdList<<"docker exec ${container.id} sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\""
-                    processor()
-            }else if (service == "twistlock") {
+                    sh (script:"docker create --name ${run_id}-fortify qubeship/fortify:4.21")
+                    sh (script:"docker cp /tmp/${run_id}/fortify.license ${run_id}-fortify:/opt/fortify/")
+                    envVarsString+=" --volumes-from ${run_id}-fortify"
+                    preProcessCmdList<<"docker exec #container.id# sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\""                    
+                    println("calling next service")
+                    process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, servicesList, preProcessCmdList, projectVariables, action)                
+                }
+            } else if (service == "twistlock" && projectVariables["TWISTLOCK_ENDPOINT_ID"]) {
                 //special treatment for twistlock
-                processor()
+                sh (script:"docker pull qubeship/twistlock:latest")
+                sh (script: "docker create --name ${run_id}-twistlock qubeship/twistlock:latest")
+                envVarsString += " --volumes-from ${run_id}-twistlock -v /var/run/docker.sock:/var/run/docker.sock"
+                twistlockEndpointId = projectVariables["TWISTLOCK_ENDPOINT_ID"].getFirst().getValue()
+                def twistlockEP = qubeApi(httpMethod: "GET", resource: "endpoints", id: twistlockEndpointId, qubeClient: qubeClient)
+                def twistlockEndpointURL = twistlockEP.endPoint
+                def twistlockCredentialsPath=""
+                if(twistlockEP.credentialPath) {
+                    twistlockCredentialsPath = "qubeship:" + twistlockEP.category + ":" + twistlockEP.credentialPath
+                }
+                envVarsString += " -e TWISTLOCK_URL=${twistlockEndpointURL}"
+                withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: twistlockCredentialsPath,
+                    usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']]) {
+                    envVarsString += " -e TWISTLOCK_UNAME=${USERNAME} -e TWISTLOCK_PWD=${PASSWORD}"
+                    process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, servicesList, preProcessCmdList,projectVariables, action)            
+                }
             } else {
-                processor()
+                process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, servicesList, preProcessCmdList,projectVariables, action)
             }
-        }  
+        }
+        wrap()
     }else{
+        println("calling action")
         action(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, getArray(preProcessCmdList)) 
     }
 }
@@ -270,7 +281,8 @@ def processOpinion(opinionList, toolchain, qubeConfig, qubeClient, envVarsString
         builderImage.withRun(envVarsString, "tail -f /dev/null") { container ->
             containerId=container.id
             for (int i = 0; i < preProcessCmdList.length; i++) {  
-                String preprocessCommand = preProcessCmdList[i]
+                String preprocessCommand = preProcessCmdList[i]?.replaceAll("#container.id#", "${container.id}")
+                println(preprocessCommand)
                 sh (preprocessCommand)
             }
             runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
@@ -394,9 +406,9 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
                 }
                 
-                //def statusCode = sh (script: scriptStmt,returnStatus:true)
-                def statusCode = 0
-                println(scriptStmt + ":" + statusCode)
+                def statusCode = sh (script: scriptStmt,returnStatus:true)
+                //def statusCode = 0
+                println("cmd: " + scriptStmt + " : statusCode: " + statusCode)
                 
                 if (statusCode == 1 ) {
                     currentBuild.result = 'FAILURE'
@@ -431,7 +443,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     sh(script:"mkdir -p ./${parentPath}")
                     def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ./${parentPath}"
                     println(copyStatement)
-                    /*
+                    
                     sh(script: copyStatement, label:"Transfering artifacts from container")
                     //if (artifactParts.length>1) {
                     //    artifactAlias = artifactParts[1]
@@ -447,10 +459,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                         reportFiles: baseArtifactFileName,
                         reportName: "Report-" + artifactAlias
                       ])
-                   } 
-                   */
-                   
-                   
+                   }  
                 }catch(Exception ex) {
                     ex.printStackTrace()
                 }
