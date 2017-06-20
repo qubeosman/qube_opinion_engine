@@ -17,6 +17,7 @@ String project_id = "${qube_project_id}"
 projectVariables = [:]
 envVars = null
 qubeYamlString = ''
+artifactToPublish = []
 
 artifactsImageId = ''
 
@@ -212,8 +213,21 @@ node {
                       \"isResource\": true
                   }"""
                   String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
-                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                  if(artifactsImageId?.trim()){
+                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                  }
                   qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+                  for (artifactItem in artifactToPublish) {
+                    def payloadItemURL = """{
+                        \"type\": \"html\",
+                        \"contentType\": \"text/html\",
+                        \"title\": \"${artifactItem}\",
+                        \"url\": \"${env.BUILD_URL}${artifactItem}\",
+                        \"isExternal\": true,
+                        \"isResource\": true
+                    }"""
+                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadItemURL)
+                }
               }
           }
         }
@@ -437,16 +451,12 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                 try {
                     artifactParts=artifactVal.tokenize(':')
                     artifact  = artifactParts[0]
-
-
-                    baseArtifactFileName=sh(returnStdout: true, script:"basename ${artifact}")
-
-                    baseArtifactFileName=baseArtifactFileName?.trim()
+                    File artifactFile = new File(artifact)
+                    parentPath = artifactFile.getParent()
+                    baseArtifactFileName=artifactFile.getName()
                     println("baseArtifactFileName:" + baseArtifactFileName)
 
-                    parentPath=sh(returnStdout: true, script:"dirname ${artifact}")
-                    parentPath=parentPath?.trim()
-                    println("parentPath :" + baseArtifactFileName)
+                    println("parentPath :" + parentPath)
                     artifactAlias=baseArtifactFileName
                     sh(script:"mkdir -p ./${parentPath}")
                     def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ./${parentPath}"
@@ -456,6 +466,9 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     //if (artifactParts.length>1) {
                     //    artifactAlias = artifactParts[1]
                     //}
+                    destArtifactName = task.name + "-" + artifactAlias
+
+
                     println("alias :" + artifactAlias)
                     
                     if (baseArtifactFileName.endsWith(".html")) {
@@ -465,8 +478,9 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                         keepAll: true,
                         reportDir: parentPath,
                         reportFiles: baseArtifactFileName,
-                        reportName: "Report-" + artifactAlias
+                        reportName: destArtifactName
                       ])
+                      artifactToPublish.push(destArtifactName)
                    }  
                 }catch(Exception ex) {
                     ex.printStackTrace()
