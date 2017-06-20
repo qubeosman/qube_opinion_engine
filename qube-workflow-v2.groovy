@@ -62,7 +62,13 @@ node {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
             stage("init") {
                 // load project
-                project = qubeApi(httpMethod: "GET", resource: "projects", id: "${project_id}", qubeClient: qubeClient)
+                for (int i = 0; i < 3; i++) { 
+                    project = qubeApi(httpMethod: "GET", resource: "projects", id: "${project_id}", qubeClient: qubeClient)
+                    if (project) {
+                        break;
+                    }
+                    println("retrying.... ${project_id}")
+                }
                 if (commithash?.trim().length() == 0) {
                     echo "replacing empty commit hash with refspec " + project.scm.refspec
                     commithash = project.scm.refspec
@@ -239,13 +245,12 @@ def process(int index, opinionList, toolchain, qubeConfig, qubeClient, envVarsSt
                     println("calling next service")
                     processor.call()
                 }
-            } else if (service == "twistlock" && projectVariables["TWISTLOCK_ENDPOINT_ID"]) {
+            } else if (service == "twistlock" && projectVariables["TWISTLOCK_ENDPOINT"]) {
                 //special treatment for twistlock
                 sh (script:"docker pull qubeship/twistlock:latest")
                 sh (script: "docker create --name ${run_id}-twistlock qubeship/twistlock:latest")
                 envVarsString += " --volumes-from ${run_id}-twistlock -v /var/run/docker.sock:/var/run/docker.sock"
-                twistlockEndpointId = projectVariables["TWISTLOCK_ENDPOINT_ID"].getFirst().getValue()
-                def twistlockEP = qubeApi(httpMethod: "GET", resource: "endpoints", id: twistlockEndpointId, qubeClient: qubeClient)
+                def twistlockEP = getQubeshipEntity(projectVariables["TWISTLOCK_ENDPOINT"])
                 def twistlockEndpointURL = twistlockEP.endPoint
                 def twistlockCredentialsPath=""
                 if(twistlockEP.credentialPath) {
@@ -522,16 +527,34 @@ def prepareDockerFileForBuild(image, id, project_name, workdir) {
     return buiderImageTag
 }
 
+def getQubeshipEntity(result) {
+    if(!result) {
+        throw new Exception("Result is null. cannot convert to qubeship entity")
+    }
+    if(result.getFirst().getType() in String) {
+        throw new Exception("$result is of type String. cannot convert to qubeship entity")
+    }
+    //def slurper = new groovy.json.JsonSlurper()
+    Object entity = net.sf.json.JSONObject.fromObject(result.getFirst().getValue())
+    //def entity = slurper.parseText(result.getFirst().getValue())
+    return entity
+}
+
 def pushPipelineEventMetrics(analyticsEndpoint, eventType, Date timestamp) {
-    if (analyticsEndpoint?.trim()) {
-        analyticsEndpoint = analyticsEndpoint[-1] == "/" ? analyticsEndpoint.substring(0, analyticsEndpoint.length() - 1) : analyticsEndpoint
-        pipelineMetricsPayload['event_id'] = randomUUID() as String
-        pipelineMetricsPayload['event_timestamp'] = timestamp.format('yyyy-MM-dd HH:mm:ss')
-        pipelineMetricsPayload['event_type'] = eventType
-        def payloadJson = JsonOutput.toJson(pipelineMetricsPayload)
-        sh (script: "curl -s -o /dev/null -X PUT ${analyticsEndpoint}/${pipelineMetricsPayload['event_id']}.json "
-            + "-H 'cache-control: no-cache' "
-            + "-H 'content-type: application/json' "
-            + "-d '${payloadJson}'")
+    try {
+        if (analyticsEndpoint?.trim()) {
+            analyticsEndpoint = analyticsEndpoint[-1] == "/" ? analyticsEndpoint.substring(0, analyticsEndpoint.length() - 1) : analyticsEndpoint
+            pipelineMetricsPayload['event_id'] = randomUUID() as String
+            pipelineMetricsPayload['event_timestamp'] = timestamp.format('yyyy-MM-dd HH:mm:ss')
+            pipelineMetricsPayload['event_type'] = eventType
+            def payloadJson = JsonOutput.toJson(pipelineMetricsPayload)
+            sh (script: "curl -s -o /dev/null -X PUT ${analyticsEndpoint}/${pipelineMetricsPayload['event_id']}.json "
+                + "-H 'cache-control: no-cache' "
+                + "-H 'content-type: application/json' "
+                + "-d '${payloadJson}'")
+        }
+    } catch(Exception ex) {
+        println("WARNING: unable to log analytic event " + ex.getMessage())
+        ex.printStackTrace();
     }
 }
