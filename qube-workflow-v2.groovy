@@ -221,7 +221,7 @@ node {
 def process(int index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, servicesList, preProcessCmdList, projectVariables, action) {
     if(index < servicesList.length )   {
         def service = servicesList[index];
-        def wrap = { x ->
+        def wrap = {  processor ->
             println(service)
             index++;
             if(service == "fortify") {
@@ -237,7 +237,7 @@ def process(int index, opinionList, toolchain, qubeConfig, qubeClient, envVarsSt
                     envVarsString+=" --volumes-from ${run_id}-fortify"
                     preProcessCmdList<<"docker exec #container.id# sh -c \"/opt/fortify/bin/fortify-install-maven-plugin.sh\""                    
                     println("calling next service")
-                    process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, servicesList, preProcessCmdList, projectVariables, action)                
+                    processor.call()
                 }
             } else if (service == "twistlock" && projectVariables["TWISTLOCK_ENDPOINT_ID"]) {
                 //special treatment for twistlock
@@ -255,13 +255,13 @@ def process(int index, opinionList, toolchain, qubeConfig, qubeClient, envVarsSt
                 withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: twistlockCredentialsPath,
                     usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']]) {
                     envVarsString += " -e TWISTLOCK_UNAME=${USERNAME} -e TWISTLOCK_PWD=${PASSWORD}"
-                    process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, servicesList, preProcessCmdList,projectVariables, action)            
+                    processor.call()
                 }
             } else {
-                process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, servicesList, preProcessCmdList,projectVariables, action)
+                processor.call()
             }
         }
-        wrap()
+        wrap() { process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, servicesList, preProcessCmdList,projectVariables, action) }
     }else{
         println("calling action")
         action(opinionList, toolchain, qubeConfig, qubeClient, envVarsString, toolchainPrefix, run_id, getArray(preProcessCmdList)) 
@@ -339,7 +339,10 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
     } else {
         boolean defaultExecuteOutsideToolchainPreference = (task.parent.name != 'build')
         println('defaultExecuteOutsideToolchainPreference: ' + defaultExecuteOutsideToolchainPreference)
-        boolean executeOutsideToolchain = task.properties.get('execute_outside_toolchain') ?:defaultExecuteOutsideToolchainPreference
+        boolean executeOutsideToolchain = defaultExecuteOutsideToolchainPreference
+        if (task.properties.get('execute_outside_toolchain')!=null) {
+            executeOutsideToolchain = task.properties.get('execute_outside_toolchain')
+        }
         boolean executeInToolchain = !executeOutsideToolchain
         println('running inside toolchain? ' + executeInToolchain)
 
