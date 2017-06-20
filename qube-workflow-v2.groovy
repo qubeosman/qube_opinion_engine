@@ -163,8 +163,8 @@ node {
                     }
                 }
 
-                supportTwistlock = projectVariables['supportTwistlock'] ?: false
-                supportFortify = projectVariables['supportFortify'] ?: false
+                supportTwistlock = projectVariables['supportTwistlock']?.toBoolean() ?: false
+                supportFortify = projectVariables['supportFortify']?.toBoolean() ?: false
 
                 // resolve all qubeship args in projectVariables
                 projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
@@ -231,7 +231,7 @@ def process(int index, opinionList, toolchain, qubeConfig, qubeClient, envVarsSt
         def wrap = {  processor ->
             println(service)
             index++;
-            if(service == "fortify") {
+            if (service == "fortify") {
                 //sh("docker exec ${container.id} sh -c \"cp /meta/fortify.license /opt/fortify\"")
                 sh (script:"docker pull qubeship/fortify:4.21")
                 println("processing service fortify")
