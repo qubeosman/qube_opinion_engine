@@ -458,7 +458,11 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
 
                     println("parentPath :" + parentPath)
                     artifactAlias=baseArtifactFileName
+                    if(parentPath) {
                     sh(script:"mkdir -p ./${parentPath}")
+                    } else {
+                      parentPath="."  
+                    }
                     def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ./${parentPath}"
                     println(copyStatement)
                     
@@ -471,7 +475,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
 
                     println("alias :" + artifactAlias)
                     
-                    if (baseArtifactFileName.endsWith(".html")) {
+                    if (baseArtifactFileName.endsWith(".html") || baseArtifactFileName.endsWith(".json") ) {
                       publishHTML (target: [
                         allowMissing: false,
                         alwaysLinkToLastBuild: false,
