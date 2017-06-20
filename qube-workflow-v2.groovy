@@ -5,7 +5,10 @@ import com.ca.io.qubeship.client.model.toolchains.Toolchain
 
 import com.ca.io.qubeship.utils.GramlClient
 import org.yaml.snakeyaml.Yaml
-
+import com.ca.io.qubeship.models.ValueWrapper
+import com.ca.io.qubeship.models.StringValueWrapper
+import com.ca.io.qubeship.models.SerializableTuple
+import com.ca.io.qubeship.client.model.Endpoint
 import static java.util.UUID.randomUUID
 
 import groovy.json.JsonOutput
@@ -16,6 +19,7 @@ String project_id = "${qube_project_id}"
 
 projectVariables = [:]
 envVars = null
+dynamicEnvVars = [:]
 qubeYamlString = ''
 artifactToPublish = []
 
@@ -69,6 +73,7 @@ node {
                         break;
                     }
                     println("retrying.... ${project_id}")
+                    sleep(3000)
                 }
                 if (commithash?.trim().length() == 0) {
                     echo "replacing empty commit hash with refspec " + project.scm.refspec
@@ -163,8 +168,8 @@ node {
                     }
                 }
 
-                supportTwistlock = projectVariables['supportTwistlock'] ?: false
-                supportFortify = projectVariables['supportFortify'] ?: false
+                supportTwistlock = projectVariables['supportTwistlock']?.toBoolean() ?: false
+                supportFortify = projectVariables['supportFortify']?.toBoolean() ?: false
 
                 // resolve all qubeship args in projectVariables
                 projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
@@ -304,7 +309,7 @@ def processOpinion(opinionList, toolchain, qubeConfig, qubeClient, envVarsString
                 println(preprocessCommand)
                 sh (preprocessCommand)
             }
-            runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
+            runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir,run_id)
         } 
     } finally {
         try {
@@ -316,7 +321,7 @@ def processOpinion(opinionList, toolchain, qubeConfig, qubeClient, envVarsString
 
 }
 
-def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
+def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir,run_id) {
     stage(stageObj.name) {
         // skip if the stage is skippable or throw error
         if ('skip' in qubeConfig[stageObj.name] && qubeConfig[stageObj.name]['skip']) {
@@ -327,7 +332,7 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
             Object[] taskList = getArray(stageObj.tasks)
             for (int i = 0; i < taskList.length; i++) {
                 def task = taskList[i];
-                status=runTask(task, toolchain, qubeConfig, qubeClient, container, workdir)
+                status=runTask(task, toolchain, qubeConfig, qubeClient, container, workdir, run_id)
             }
         }
     }
@@ -335,7 +340,7 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
         def nextItems = (LinkedList<Stage>)stageObj.getProperties().get("next");
         Object[] stages=getArray(nextItems);
         for( int i = 0; i<stages?.length; i++){ 
-           runStage(stages[i], toolchain, qubeConfig, qubeClient, container, workdir) 
+           runStage(stages[i], toolchain, qubeConfig, qubeClient, container, workdir,run_id) 
         }
     }else{
         println("stage : " + stageObj.name + " : complete")
@@ -343,7 +348,7 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
 
 }
 
-def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=null) {
+def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=null, run_id=null) {
     def taskDefInProject = null
     if (task.parent.name in qubeConfig && task.name in qubeConfig[task.parent.name]) {
         println("found taskdef in project: " + task.parent.name + ":" + task.name)
@@ -424,13 +429,36 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             println('credentialsMetadata.size(): ' + command.credentialsMetadata?.size());
             qubeship.withQubeCredentials(command.credentialsMetadata) {
                 String scriptStmt = command.fullQubeshipCommand
-                if (executeInToolchain) {
-                    scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
+                def statusCode = 0
+                if (scriptStmt.contains('docker build ')) {
+                    resolvedScriptStmt = scriptStmt.replaceAll("docker build ", "docker build -q ") + " | tee /tmp/${run_id}-buildimage"
+                    println(resolvedScriptStmt)
+                    statusCode = sh (script: resolvedScriptStmt,returnStatus:true)
+                    def imageId = readFile("/tmp/${run_id}-buildimage").trim().tokenize(':').last()
+                    dynamicEnvVars["QUBESHIP_IMAGE_ID"] = imageId
+                    projectVariables["QUBESHIP_IMAGE_ID"] = new SerializableTuple<ValueWrapper,Endpoint>(new StringValueWrapper(imageId), null);
+                } else {
+                    dynamicEnvVarsString=""
+                    dynamicEnvVarsShellString = ""
+                    dynamicEnvVarsDockerString=""
+                    for (envEntryKey in dynamicEnvVars.keySet() ) {
+                        envEntry=envEntryKey+"="+dynamicEnvVars[envEntryKey]
+                        dynamicEnvVarsShellString+="export ${envEntry}; " 
+                        //dynamicEnvVarsDockerString+="-e ${envEntry} " 
+                    }
+                    println("dynamicEnvVarsShellString: ${dynamicEnvVarsShellString}")
+                    println("dynamicEnvVarsDockerString: ${dynamicEnvVarsDockerString}")
+
+                    if (executeInToolchain) {
+                        scriptStmt = "docker exec ${dynamicEnvVarsDockerString} ${container.id} sh -c \"" + scriptStmt.trim() + "\""
+                    } else {
+                        scriptStmt="${dynamicEnvVarsShellString} ${scriptStmt}"
+                    }
+                    println(scriptStmt)
+                    statusCode = sh (script: scriptStmt,returnStatus:true)
                 }
-                
-                def statusCode = sh (script: scriptStmt,returnStatus:true)
-                //def statusCode = 0
                 println("cmd: " + scriptStmt + " : statusCode: " + statusCode)
+                //def statusCode = 0
                 
                 if (statusCode == 1 ) {
                     currentBuild.result = 'FAILURE'
