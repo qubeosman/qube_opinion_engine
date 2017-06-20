@@ -169,7 +169,7 @@ node {
                 // resolve all qubeship args in projectVariables
                 projectVariables = qubeship.resolveVariables(qubeshipUrl, tnt_guid, org_guid, project_id, projectVariables, qubeYamlString)
                 envVars = qubeship.getEnvVars()
-                envVarsString = "--volumes-from ${run_id}-meta "
+                envVarsString = " "
                 if (envVars != null && projectVariables != null) {
                     for (qubeshipVariable in projectVariables) {
                         if (qubeshipVariable.value.getFirst().getType() in String) {
