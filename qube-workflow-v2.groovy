@@ -54,10 +54,11 @@ node {
     String analyticsEndpoint = "${env.ANALYTICS_ENDPOINT}"
 
     String run_id = randomUUID() as String
-    sh (script:"docker create  -v /meta --name ${run_id}-meta busybox")
-    boolean supportFortify=false
+
+    boolean supportFortify = false
     boolean supportTwistlock = false
     def servicesList = [] as LinkedList
+
     try {
         qubeship.inQubeshipTenancy(tnt_guid, org_guid, qubeshipUrl) { qubeClient ->
             stage("init") {
@@ -181,11 +182,11 @@ node {
                         }
                     }
                 }
-                if(supportFortify) {
-                    servicesList<<"fortify"
+                if (supportFortify) {
+                    servicesList << "fortify"
                 }
                 if (supportTwistlock) {
-                    servicesList<<"twistlock"
+                    servicesList << "twistlock"
                 }
             }
             try {
@@ -196,26 +197,26 @@ node {
                   process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, getArray(servicesList), preProcessCmdList, projectVariables, action)
               }
             } finally {
-              stage('Publish Artifacts') {
-                  def payloadImageId = """{
-                      \"type\": \"image\",
-                      \"contentType\": \"text/plain\",
-                      \"title\": \"${artifactsImageId}\",
-                      \"url\": \"${artifactsImageId}\",
-                      \"isResource\": false
-                  }"""
-                  def payloadLogURL = """{
-                      \"type\": \"log\",
-                      \"contentType\": \"text/plain\",
-                      \"title\": \"Full Log\",
-                      \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
-                      \"isResource\": true
-                  }"""
-                  String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
-                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
-                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
-              }
-          }
+                stage('Publish Artifacts') {
+                    def payloadImageId = """{
+                        \"type\": \"image\",
+                        \"contentType\": \"text/plain\",
+                        \"title\": \"${artifactsImageId}\",
+                        \"url\": \"${artifactsImageId}\",
+                        \"isResource\": false
+                    }"""
+                    def payloadLogURL = """{
+                        \"type\": \"log\",
+                        \"contentType\": \"text/plain\",
+                        \"title\": \"Full Log\",
+                        \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                        \"isResource\": true
+                    }"""
+                    String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
+                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+                }
+            }
         }
     } finally {
         // signal: build end
