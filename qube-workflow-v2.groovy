@@ -341,7 +341,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
         int count = 0
         if (taskDefInProject?.args) {
             for (arg in taskDefInProject?.args) {
-                count++ect
+                count++
                 args.put(count, arg)
 
                 println("found args in project : " + arg)                
