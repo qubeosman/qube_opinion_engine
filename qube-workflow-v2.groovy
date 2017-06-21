@@ -200,6 +200,7 @@ node {
                       \"contentType\": \"text/plain\",
                       \"title\": \"${artifactsImageId}\",
                       \"url\": \"${artifactsImageId}\",
+                      \"isExternal\": false,
                       \"isResource\": false
                   }"""
                   def payloadLogURL = """{
@@ -207,11 +208,15 @@ node {
                       \"contentType\": \"text/plain\",
                       \"title\": \"Full Log\",
                       \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                      \"isExternal\": false,
                       \"isResource\": true
                   }"""
                   String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
-                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                  if(artifactsImageId?.trim()){
+                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                  }
                   qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+                  
               }
           }
         }
@@ -336,7 +341,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
         int count = 0
         if (taskDefInProject?.args) {
             for (arg in taskDefInProject?.args) {
-                count++
+                count++ect
                 args.put(count, arg)
 
                 println("found args in project : " + arg)                
@@ -415,6 +420,17 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                         reportFiles: baseArtifactFileName,
                         reportName: destArtifactName
                       ])
+                      def payloadItemURL = """{
+                           \"type\": \"html\",
+                           \"contentType\": \"text/html\",
+                           \"title\": \"${artifactItem}\",
+                           \"url\": \"${env.BUILD_URL}${artifactItem}\",
+                           \"isExternal\": true,
+                           \"isResource\": true
+                       }"""
+                        
+                        pushTo = project_id + '/' + env.BUILD_NUMBER + '/artifacts'
+                       qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qClient, subContextPath: pushTo, reqBody: payloadItemURL)
                    } 
                    
                    
