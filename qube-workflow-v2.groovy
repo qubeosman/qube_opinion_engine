@@ -476,48 +476,49 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             }
         }
         }finally{
-        if (taskDefInProject?.publish && executeInToolchain) {
-            for (artifactVal in taskDefInProject.publish) {
-                try {
-                    artifactParts=artifactVal.tokenize(':')
-                    artifact  = artifactParts[0]
-                    File artifactFile = new File(artifact)
-                    parentPath = artifactFile.getParent()
-                    baseArtifactFileName=artifactFile.getName()
-                    println("baseArtifactFileName:" + baseArtifactFileName)
+            if (taskDefInProject?.publish && executeInToolchain) {
+                for (artifactVal in taskDefInProject.publish) {
+                    try {
+                        artifactParts=artifactVal.tokenize(':')
+                        artifact  = artifactParts[0]
+                        File artifactFile = new File(artifact)
+                        parentPath = artifactFile.getParent()
+                        baseArtifactFileName=artifactFile.getName()
+                        println("baseArtifactFileName:" + baseArtifactFileName)
 
-                    println("parentPath :" + parentPath)
-                    artifactAlias=baseArtifactFileName
-                    if(parentPath) {
-                    sh(script:"mkdir -p ./${parentPath}")
-                    } else {
-                      parentPath="."  
+                        println("parentPath :" + parentPath)
+                        artifactAlias=baseArtifactFileName
+                        if(parentPath) {
+                        sh(script:"mkdir -p ./${parentPath}")
+                        } else {
+                          parentPath="."  
+                        }
+                        def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ./${parentPath}"
+                        println(copyStatement)
+                        
+                        sh(script: copyStatement, label:"Transfering artifacts from container")
+                        //if (artifactParts.length>1) {
+                        //    artifactAlias = artifactParts[1]
+                        //}
+                        destArtifactName = task.name + "-" + artifactAlias
+
+
+                        println("alias :" + artifactAlias)
+                        
+                        if (baseArtifactFileName.endsWith(".html") || baseArtifactFileName.endsWith(".json") ) {
+                          publishHTML (target: [
+                            allowMissing: false,
+                            alwaysLinkToLastBuild: false,
+                            keepAll: true,
+                            reportDir: parentPath,
+                            reportFiles: baseArtifactFileName,
+                            reportName: destArtifactName
+                          ])
+                          artifactToPublish.push(destArtifactName)
+                       }  
+                    }catch(Exception ex) {
+                        ex.printStackTrace()
                     }
-                    def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ./${parentPath}"
-                    println(copyStatement)
-                    
-                    sh(script: copyStatement, label:"Transfering artifacts from container")
-                    //if (artifactParts.length>1) {
-                    //    artifactAlias = artifactParts[1]
-                    //}
-                    destArtifactName = task.name + "-" + artifactAlias
-
-
-                    println("alias :" + artifactAlias)
-                    
-                    if (baseArtifactFileName.endsWith(".html") || baseArtifactFileName.endsWith(".json") ) {
-                      publishHTML (target: [
-                        allowMissing: false,
-                        alwaysLinkToLastBuild: false,
-                        keepAll: true,
-                        reportDir: parentPath,
-                        reportFiles: baseArtifactFileName,
-                        reportName: destArtifactName
-                      ])
-                      artifactToPublish.push(destArtifactName)
-                   }  
-                }catch(Exception ex) {
-                    ex.printStackTrace()
                 }
             }
         }
