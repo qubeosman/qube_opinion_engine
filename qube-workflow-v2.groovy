@@ -18,7 +18,7 @@ String project_id = "${qube_project_id}"
 projectVariables = [:]
 envVars = null
 qubeYamlString = ''
-
+artifactToPublish = []
 artifactsImageId = ''
 
 pipelineMetricsPayload = [
@@ -217,6 +217,18 @@ node {
                   }
                   qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
                   
+                  for (artifactItem in artifactToPublish) {
+    
+                        def payloadItemURL = """{
+                        \"type\": \"html\",
+                        \"contentType\": \"text/html\",
+                        \"title\": \"${artifactItem}\",
+                        \"url\": \"${env.BUILD_URL}${artifactItem}\",
+                        \"isExternal\": true,
+                        \"isResource\": true
+                    }"""
+                        qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qClient, subContextPath: pushTo, reqBody: payloadItemURL)
+                    }
               }
           }
         }
@@ -420,17 +432,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                         reportFiles: baseArtifactFileName,
                         reportName: destArtifactName
                       ])
-                      def payloadItemURL = """{
-                           \"type\": \"html\",
-                           \"contentType\": \"text/html\",
-                           \"title\": \"${artifactItem}\",
-                           \"url\": \"${env.BUILD_URL}${artifactItem}\",
-                           \"isExternal\": true,
-                           \"isResource\": true
-                       }"""
-                        
-                        pushTo = project_id + '/' + env.BUILD_NUMBER + '/artifacts'
-                       qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qClient, subContextPath: pushTo, reqBody: payloadItemURL)
+                      artifactToPublish.push(destArtifactName)
                    } 
                    
                    
