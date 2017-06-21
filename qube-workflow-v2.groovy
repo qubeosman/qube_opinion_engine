@@ -405,7 +405,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     //    artifactAlias = artifactParts[1]
                     //}
                     println("alias :" + artifactAlias)
-                    
+                    destArtifactName = task.name + "-" + artifactAlias
                     if (baseArtifactFileName.endsWith(".html")) {
                       publishHTML (target: [
                         allowMissing: false,
@@ -413,7 +413,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                         keepAll: true,
                         reportDir: parentPath,
                         reportFiles: baseArtifactFileName,
-                        reportName: "Report-" + artifactAlias
+                        reportName: destArtifactName
                       ])
                    } 
                    
