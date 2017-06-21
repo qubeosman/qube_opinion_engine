@@ -227,7 +227,7 @@ node {
                         \"isExternal\": true,
                         \"isResource\": true
                     }"""
-                        qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qClient, subContextPath: pushTo, reqBody: payloadItemURL)
+                        qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadItemURL)
                     }
               }
           }
