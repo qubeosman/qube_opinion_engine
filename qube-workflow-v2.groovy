@@ -296,7 +296,10 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
     } else {
         boolean defaultExecuteOutsideToolchainPreference = (task.parent.name != 'build')
         println('defaultExecuteOutsideToolchainPreference: ' + defaultExecuteOutsideToolchainPreference)
-        boolean executeOutsideToolchain = task.properties.get('execute_outside_toolchain') ?:defaultExecuteOutsideToolchainPreference
+        boolean executeOutsideToolchain = defaultExecuteOutsideToolchainPreference
+        if (task.properties.get('execute_outside_toolchain')!=null) {
+            executeOutsideToolchain = task.properties.get('execute_outside_toolchain')
+        }
         boolean executeInToolchain = !executeOutsideToolchain
         println('running inside toolchain? ' + executeInToolchain)
 
