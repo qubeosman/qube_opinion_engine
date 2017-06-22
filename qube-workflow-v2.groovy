@@ -18,7 +18,7 @@ String project_id = "${qube_project_id}"
 projectVariables = [:]
 envVars = null
 qubeYamlString = ''
-
+artifactToPublish = []
 artifactsImageId = ''
 
 pipelineMetricsPayload = [
@@ -200,6 +200,7 @@ node {
                       \"contentType\": \"text/plain\",
                       \"title\": \"${artifactsImageId}\",
                       \"url\": \"${artifactsImageId}\",
+                      \"isExternal\": false,
                       \"isResource\": false
                   }"""
                   def payloadLogURL = """{
@@ -207,11 +208,27 @@ node {
                       \"contentType\": \"text/plain\",
                       \"title\": \"Full Log\",
                       \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                      \"isExternal\": false,
                       \"isResource\": true
                   }"""
                   String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
-                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                  if(artifactsImageId?.trim()){
+                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                  }
                   qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+                  
+                  for (artifactItem in artifactToPublish) {
+    
+                        def payloadItemURL = """{
+                        \"type\": \"html\",
+                        \"contentType\": \"text/html\",
+                        \"title\": \"${artifactItem}\",
+                        \"url\": \"${env.BUILD_URL}${artifactItem}\",
+                        \"isExternal\": true,
+                        \"isResource\": true
+                    }"""
+                        qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadItemURL)
+                    }
               }
           }
         }
@@ -296,7 +313,10 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
     } else {
         boolean defaultExecuteOutsideToolchainPreference = (task.parent.name != 'build')
         println('defaultExecuteOutsideToolchainPreference: ' + defaultExecuteOutsideToolchainPreference)
-        boolean executeOutsideToolchain = task.properties.get('execute_outside_toolchain') ?:defaultExecuteOutsideToolchainPreference
+        boolean executeOutsideToolchain = defaultExecuteOutsideToolchainPreference
+        if (task.properties.get('execute_outside_toolchain')!=null) {
+            executeOutsideToolchain = task.properties.get('execute_outside_toolchain')
+        }
         boolean executeInToolchain = !executeOutsideToolchain
         println('running inside toolchain? ' + executeInToolchain)
 
@@ -402,7 +422,7 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                     //    artifactAlias = artifactParts[1]
                     //}
                     println("alias :" + artifactAlias)
-                    
+                    destArtifactName = task.name + "-" + artifactAlias
                     if (baseArtifactFileName.endsWith(".html")) {
                       publishHTML (target: [
                         allowMissing: false,
@@ -410,8 +430,9 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                         keepAll: true,
                         reportDir: parentPath,
                         reportFiles: baseArtifactFileName,
-                        reportName: "Report-" + artifactAlias
+                        reportName: destArtifactName
                       ])
+                      artifactToPublish.push(destArtifactName)
                    } 
                    
                    
