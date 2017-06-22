@@ -22,7 +22,6 @@ envVars = null
 dynamicEnvVars = [:]
 qubeYamlString = ''
 artifactToPublish = []
-
 artifactsImageId = ''
 
 pipelineMetricsPayload = [
@@ -203,40 +202,43 @@ node {
                   process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, getArray(servicesList), preProcessCmdList, projectVariables, action)
               }
             } finally {
-              stage('Publish Artifacts') {
-                  def payloadImageId = """{
-                      \"type\": \"image\",
-                      \"contentType\": \"text/plain\",
-                      \"title\": \"${artifactsImageId}\",
-                      \"url\": \"${artifactsImageId}\",
-                      \"isResource\": false
-                  }"""
-                  def payloadLogURL = """{
-                      \"type\": \"log\",
-                      \"contentType\": \"text/plain\",
-                      \"title\": \"Full Log\",
-                      \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
-                      \"isResource\": true
-                  }"""
-                  String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
-                  if(artifactsImageId?.trim()){
-                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
-                  }
-                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
-                  for (artifactItem in artifactToPublish) {
-                    def payloadItemURL = """{
-                        \"type\": \"html\",
-                        \"contentType\": \"text/html\",
-                        \"title\": \"${artifactItem}\",
-                        \"url\": \"${env.BUILD_URL}${artifactItem}\",
-                        \"isExternal\": true,
+                stage('Publish Artifacts') {
+                    def payloadImageId = """{
+                        \"type\": \"image\",
+                        \"contentType\": \"text/plain\",
+                        \"title\": \"${artifactsImageId}\",
+                        \"url\": \"${artifactsImageId}\",
+                        \"isExternal\": false,
+                        \"isResource\": false
+                    }"""
+                    def payloadLogURL = """{
+                        \"type\": \"log\",
+                        \"contentType\": \"text/plain\",
+                        \"title\": \"Full Log\",
+                        \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                        \"isExternal\": false,
                         \"isResource\": true
                     }"""
-                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadItemURL)
-                }
-              }
-          }
+                    String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
+                    if (artifactsImageId?.trim()){
+                        qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                    }
+                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
 
+                    for (artifactItem in artifactToPublish) { 
+                        def payloadItemURL = """{
+                            \"type\": \"html\",
+                            \"contentType\": \"text/html\",
+                            \"title\": \"${artifactItem}\",
+                            \"url\": \"${env.BUILD_URL}${artifactItem}\",
+                            \"isExternal\": true,
+                            \"isResource\": true
+                        }"""
+
+                        qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadItemURL)
+                    }
+                }
+            }
         }
     } finally {
         // signal: build end
