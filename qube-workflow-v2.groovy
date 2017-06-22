@@ -242,7 +242,7 @@ node {
         }
     } finally {
         // signal: build end
-        containers_list = sh (returnStdout: true, script: "docker ps -aq --filter \"name=${run_id}-*\"")?.trim()
+        containers_list = sh (returnStdout: true, script: "docker ps -aq --filter \"name=${run_id}-*\" | tr '\n' ' '")?.trim()
         if (containers_list) {
             sh (script: "docker rm -f ${containers_list}")
         }
