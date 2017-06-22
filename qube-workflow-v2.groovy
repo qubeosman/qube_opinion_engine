@@ -5,7 +5,10 @@ import com.ca.io.qubeship.client.model.toolchains.Toolchain
 
 import com.ca.io.qubeship.utils.GramlClient
 import org.yaml.snakeyaml.Yaml
-
+import com.ca.io.qubeship.models.ValueWrapper
+import com.ca.io.qubeship.models.StringValueWrapper
+import com.ca.io.qubeship.models.SerializableTuple
+import com.ca.io.qubeship.client.model.Endpoint
 import static java.util.UUID.randomUUID
 
 import groovy.json.JsonOutput
@@ -16,7 +19,9 @@ String project_id = "${qube_project_id}"
 
 projectVariables = [:]
 envVars = null
+dynamicEnvVars = [:]
 qubeYamlString = ''
+artifactToPublish = []
 
 artifactsImageId = ''
 
@@ -69,6 +74,7 @@ node {
                         break;
                     }
                     println("retrying.... ${project_id}")
+                    sleep(3000)
                 }
                 if (commithash?.trim().length() == 0) {
                     echo "replacing empty commit hash with refspec " + project.scm.refspec
@@ -197,26 +203,40 @@ node {
                   process(index, opinionList, toolchain, qubeConfig, qubeClient, envVarsString,toolchainPrefix,run_id, getArray(servicesList), preProcessCmdList, projectVariables, action)
               }
             } finally {
-                stage('Publish Artifacts') {
-                    def payloadImageId = """{
-                        \"type\": \"image\",
-                        \"contentType\": \"text/plain\",
-                        \"title\": \"${artifactsImageId}\",
-                        \"url\": \"${artifactsImageId}\",
-                        \"isResource\": false
-                    }"""
-                    def payloadLogURL = """{
-                        \"type\": \"log\",
-                        \"contentType\": \"text/plain\",
-                        \"title\": \"Full Log\",
-                        \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+              stage('Publish Artifacts') {
+                  def payloadImageId = """{
+                      \"type\": \"image\",
+                      \"contentType\": \"text/plain\",
+                      \"title\": \"${artifactsImageId}\",
+                      \"url\": \"${artifactsImageId}\",
+                      \"isResource\": false
+                  }"""
+                  def payloadLogURL = """{
+                      \"type\": \"log\",
+                      \"contentType\": \"text/plain\",
+                      \"title\": \"Full Log\",
+                      \"url\": \"${qubeshipUrl}/v1/pipelines/${project.id}/iterations/${env.BUILD_NUMBER}/logs\",
+                      \"isResource\": true
+                  }"""
+                  String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
+                  if(artifactsImageId?.trim()){
+                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
+                  }
+                  qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+                  for (artifactItem in artifactToPublish) {
+                    def payloadItemURL = """{
+                        \"type\": \"html\",
+                        \"contentType\": \"text/html\",
+                        \"title\": \"${artifactItem}\",
+                        \"url\": \"${env.BUILD_URL}${artifactItem}\",
+                        \"isExternal\": true,
                         \"isResource\": true
                     }"""
-                    String pushTo = project.id + '/' + env.BUILD_NUMBER + '/artifacts'
-                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadImageId)
-                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadLogURL)
+                    qubeApiList(httpMethod: "POST", resource: "artifacts", qubeClient: qubeClient, subContextPath: pushTo, reqBody: payloadItemURL)
                 }
-            }
+              }
+          }
+
         }
     } finally {
         // signal: build end
@@ -291,7 +311,7 @@ def processOpinion(opinionList, toolchain, qubeConfig, qubeClient, envVarsString
                 println(preprocessCommand)
                 sh (preprocessCommand)
             }
-            runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir)
+            runStage(opinionList[0], toolchain, qubeConfig, qubeClient, container, workdir,run_id)
         } 
     } finally {
         try {
@@ -303,7 +323,7 @@ def processOpinion(opinionList, toolchain, qubeConfig, qubeClient, envVarsString
 
 }
 
-def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
+def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir,run_id) {
     stage(stageObj.name) {
         // skip if the stage is skippable or throw error
         if ('skip' in qubeConfig[stageObj.name] && qubeConfig[stageObj.name]['skip']) {
@@ -314,7 +334,7 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
             Object[] taskList = getArray(stageObj.tasks)
             for (int i = 0; i < taskList.length; i++) {
                 def task = taskList[i];
-                status=runTask(task, toolchain, qubeConfig, qubeClient, container, workdir)
+                status=runTask(task, toolchain, qubeConfig, qubeClient, container, workdir, run_id)
             }
         }
     }
@@ -322,7 +342,7 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
         def nextItems = (LinkedList<Stage>)stageObj.getProperties().get("next");
         Object[] stages=getArray(nextItems);
         for( int i = 0; i<stages?.length; i++){ 
-           runStage(stages[i], toolchain, qubeConfig, qubeClient, container, workdir) 
+           runStage(stages[i], toolchain, qubeConfig, qubeClient, container, workdir,run_id) 
         }
     }else{
         println("stage : " + stageObj.name + " : complete")
@@ -330,7 +350,7 @@ def runStage(stageObj, toolchain, qubeConfig, qubeClient, container, workdir) {
 
 }
 
-def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=null) {
+def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=null, run_id=null) {
     def taskDefInProject = null
     if (task.parent.name in qubeConfig && task.name in qubeConfig[task.parent.name]) {
         println("found taskdef in project: " + task.parent.name + ":" + task.name)
@@ -411,13 +431,37 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
             println('credentialsMetadata.size(): ' + command.credentialsMetadata?.size());
             qubeship.withQubeCredentials(command.credentialsMetadata) {
                 String scriptStmt = command.fullQubeshipCommand
-                if (executeInToolchain) {
-                    scriptStmt = "docker exec ${container.id} sh -c \"" + scriptStmt.trim() + "\""
-                }
-                def statusCode = sh (script: scriptStmt,returnStatus:true)
-                //def statusCode = 0
-                println("cmd: " + scriptStmt + " : statusCode: " + statusCode)
+                def statusCode = 0
+                if (scriptStmt.contains('docker build ')) {
+                    resolvedScriptStmt = scriptStmt.replaceAll("docker build ", "docker build -q ") + " | tee /tmp/${run_id}-buildimage"
+                    println(resolvedScriptStmt)
+                    statusCode = sh (script: resolvedScriptStmt,returnStatus:true)
+                    def imageId = readFile("/tmp/${run_id}-buildimage").trim().tokenize(':').last()
+                    dynamicEnvVars["QUBESHIP_IMAGE_ID"] = imageId
+                    projectVariables["QUBESHIP_IMAGE_ID"] = new SerializableTuple<ValueWrapper,Endpoint>(new StringValueWrapper(imageId), null);
+                } else {
+                    dynamicEnvVarsString=""
+                    dynamicEnvVarsShellString = ""
+                    dynamicEnvVarsDockerString=""
+                    for (envEntryKey in dynamicEnvVars.keySet() ) {
+                        envEntry=envEntryKey+"="+dynamicEnvVars[envEntryKey]
+                        dynamicEnvVarsShellString+="export ${envEntry}; " 
+                        //dynamicEnvVarsDockerString+="-e ${envEntry} " 
+                    }
+                    println("dynamicEnvVarsShellString: ${dynamicEnvVarsShellString}")
+                    println("dynamicEnvVarsDockerString: ${dynamicEnvVarsDockerString}")
 
+                    if (executeInToolchain) {
+                        scriptStmt = "docker exec ${dynamicEnvVarsDockerString} ${container.id} sh -c \"" + scriptStmt.trim() + "\""
+                    } else {
+                        scriptStmt="${dynamicEnvVarsShellString} ${scriptStmt}"
+                    }
+                    println(scriptStmt)
+                    statusCode = sh (script: scriptStmt,returnStatus:true)
+                }
+                println("cmd: " + scriptStmt + " : statusCode: " + statusCode)
+                //def statusCode = 0
+  
                 if (statusCode == 1 ) {
                     currentBuild.result = 'FAILURE'
                     throw new Exception("$scriptStmt returned error code :" + statusCode)
@@ -431,44 +475,48 @@ def runTask(task, toolchain, qubeConfig, qubeClient, container=null, workdir=nul
                 }
             }
         }
-        } finally {
+        }finally{
             if (taskDefInProject?.publish && executeInToolchain) {
                 for (artifactVal in taskDefInProject.publish) {
                     try {
                         artifactParts=artifactVal.tokenize(':')
                         artifact  = artifactParts[0]
-
-
-                        baseArtifactFileName=sh(returnStdout: true, script:"basename ${artifact}")
-
-                        baseArtifactFileName=baseArtifactFileName?.trim()
+                        File artifactFile = new File(artifact)
+                        parentPath = artifactFile.getParent()
+                        baseArtifactFileName=artifactFile.getName()
                         println("baseArtifactFileName:" + baseArtifactFileName)
 
-                        parentPath=sh(returnStdout: true, script:"dirname ${artifact}")
-                        parentPath=parentPath?.trim()
-                        println("parentPath :" + baseArtifactFileName)
+                        println("parentPath :" + parentPath)
                         artifactAlias=baseArtifactFileName
+                        if(parentPath) {
                         sh(script:"mkdir -p ./${parentPath}")
+                        } else {
+                          parentPath="."  
+                        }
                         def copyStatement = "docker cp ${container.id}:${workdir}/${artifact} ./${parentPath}"
                         println(copyStatement)
-
+                        
                         sh(script: copyStatement, label:"Transfering artifacts from container")
                         //if (artifactParts.length>1) {
                         //    artifactAlias = artifactParts[1]
                         //}
+                        destArtifactName = task.name + "-" + artifactAlias
+
+
                         println("alias :" + artifactAlias)
                         
-                        if (baseArtifactFileName.endsWith(".html")) {
+                        if (baseArtifactFileName.endsWith(".html") || baseArtifactFileName.endsWith(".json") ) {
                           publishHTML (target: [
                             allowMissing: false,
                             alwaysLinkToLastBuild: false,
                             keepAll: true,
                             reportDir: parentPath,
                             reportFiles: baseArtifactFileName,
-                            reportName: "Report-" + artifactAlias
+                            reportName: destArtifactName
                           ])
-                       }
-                    } catch(Exception ex) {
+                          artifactToPublish.push(destArtifactName)
+                       }  
+                    }catch(Exception ex) {
                         ex.printStackTrace()
                     }
                 }
