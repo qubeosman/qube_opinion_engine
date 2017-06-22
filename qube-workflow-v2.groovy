@@ -242,7 +242,11 @@ node {
         }
     } finally {
         // signal: build end
-        sh (script: "docker rm -f \$(docker ps -aq --filter \"name=${run_id}-*\")")
+        containers_list = sh (returnStdout: true, script: "docker ps -aq --filter \"name=${run_id}-*\"")?.trim()
+        if (containers_list) {
+            sh (script: "docker rm -f ${containers_list}")
+        }
+
         pushPipelineEventMetrics(analyticsEndpoint, 'end', new Date())
     }
 }
