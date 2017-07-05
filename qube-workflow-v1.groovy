@@ -20,6 +20,7 @@ node {
     stage 'Qubeship Initializing'
 
     def isDryRun = "${dry_run}" == "true"
+    def isCD = "${is_cd}" == "true"
     def isQubeshipProject = "${is_qube_project}" == "true"
 
     def refspec="${refspec}"
@@ -29,7 +30,6 @@ node {
       commithash = refspec
     }
     def branch=(refspec?:"master").tokenize('/').last()
-    def isCD = true
 
     credId = '32cd5f88-34c6-4155-83fa-46f5a41a78d6';
     if(!isQubeshipProject) credId = "cred_"+"${qube_project_id}";
@@ -231,14 +231,14 @@ node {
       testApplication(appSvcName, functionalTestProvider)
     }
 
+
+    stage 'Push image to registry'
+    pushImageToRepositories(repositories, imageTag,isQubeshipProject);
+
+    stage 'Container Security Scan'
+    sh(script:"cat qube_utils/scan.txt",label:'Static Security Scan - Claire')
+    sh(script:"cat qube_utils/scan.txt",label:'Dynamic Security Scan - Twistlock')
     if (isCD && !skipDeployment) {
-      stage 'Push image to registry'
-      pushImageToRepositories(repositories, imageTag,isQubeshipProject);
-
-      stage 'Container Security Scan'
-      sh(script:"cat qube_utils/scan.txt",label:'Static Security Scan - Claire')
-      sh(script:"cat qube_utils/scan.txt",label:'Dynamic Security Scan - Twistlock')
-
       stage 'approval to promote to prod'
       if (!isContinuousDeployment) {
         input 'Are you sure?'
