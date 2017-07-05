@@ -14,6 +14,7 @@ node {
   def notificationToken = null
   def notificationType = null
   def qubeConfig = null;
+  def currentBuild = getCurrentBuild()
   currentBuild.result = Result.SUCCESS
 
   try{
