@@ -50,7 +50,8 @@ node {
     shorthash = gitCommit.take(6)
 
     //sh (script: "apt-get install -y python-yaql")
-    sh (script: "git clone https://github.com/Qubeship/qube_utils qube_utils",label:"Fetching qubeship scripts and templates")
+    sh (script: "if [ ! -d qube_utils ]; then git clone https://github.com/Qubeship/qube_utils qube_utils; else cd qube_utils; git pull; cd -; fi",label:"Fetching qubeship scripts and templates")
+    sh (script: "if [ ! -d gitstats ]; then git clone https://github.com/hoxu/gitstats; fi",label:"Fetching gitstats script")
 
     def config_file = "qube.yaml"
 
@@ -155,11 +156,15 @@ node {
 
   */
    def mavenSettingsFile = "./settings.xml"
+   def pypirc="~/.pypirc"
 
     wrap([$class: 'ConfigFileBuildWrapper', 
             managedFiles: [
                 [fileId: '0d1085a9-09c6-4261-bdff-5f2b714cca50', 
-                targetLocation: "${mavenSettingsFile}"]]]) {
+                targetLocation: "${mavenSettingsFile}"],
+                [fileId: '1dd7d4f0-9c54-4d3f-8034-148e34b7a213', 
+                targetLocation: "${pypirc}"],
+                ]]) {
      
       if(isDockerFileBasedBuild)  {
         sh(script:"docker build -t ${appSvcName}-build -f ${dockerFile} .",label:"Building docker image")
@@ -170,6 +175,7 @@ node {
         sh ( script:"echo FROM $image > $dockerFile && \
         echo RUN mkdir -p /home/app >> $dockerFile && \
         echo WORKDIR /home/app >> $dockerFile && \
+        echo ENV QUBE_BUILD_VERSION=${imageVersion} >> $dockerFile && \
         echo ADD . /home/app >> $dockerFile",label:"Preparing docker file")
         for(String scriptStmt:scripts) {
           scriptStmt = scriptStmt.trim()
@@ -530,7 +536,21 @@ def pushImageToRepositories(ArrayList repositories, String imageTag, boolean isQ
     } 
     else if (repo.type == "dtr") {
       pushImageToDTR(repo, imageTag)
+    } else if (repo.type == "dockerhub") {
+      pushImageToRegistry(repo, imageTag, 'https://index.docker.io/v1/', 'qubebuilder-dockerhub',isQubeshipProject)
+    } else if (repo.type == "qube-docker-registry") {
+        pushImageToRegistry(repo, imageTag, 'https://docker-registry.qubeship.io/', 'nexus-qubeship-docker',isQubeshipProject)
+    } else if (repo.type == "quay") {
+        pushImageToRegistry(repo, imageTag, 'https://quay.io/', 'qubebuilder-quay',isQubeshipProject)
     }
+    
+  }
+}
+def pushImageToRegistry(Repository repo, String imageTag, String server, String credential, boolean isQubeshipProject) {
+  println "pushImageToGCR: "+ repo.name + " :" + repo.tag +" qubeshipRegistry: " + isQubeshipProject
+  def result = sh (returnStdout: true, script: "docker tag ${imageTag} ${repo.tag}",label:"Preparing image for docker push")
+  withDockerRegistry([credentialsId: credential, url: server]) {
+    sh (script: "docker push ${repo.tag}",label:"Pushing image to docker registry")
   }
 }
 
